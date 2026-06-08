@@ -9,17 +9,16 @@ Consent views are authenticated and available after onboarding is complete.
 from __future__ import annotations
 
 import base64
-from datetime import UTC, datetime, timedelta
 import hmac
 import json
 import logging
-from pathlib import Path
 import subprocess
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
 from aiohttp import web
-
 from homeassistant.auth.const import GROUP_ID_USER
 from homeassistant.auth.providers.homeassistant import HassAuthProvider, InvalidUser
 from homeassistant.components import frontend
@@ -622,7 +621,7 @@ class GAOnboardingCreateUserView(HomeAssistantView):
 
         # Create person entity if available
         if "person" in hass.config.components:
-            from homeassistant.components import person  # noqa: PLC0415
+            from homeassistant.components import person
 
             await person.async_create_person(hass, name, user_id=user.id)
 
@@ -634,7 +633,7 @@ class GAOnboardingCreateUserView(HomeAssistantView):
             await store.async_save(state)
 
         # Return auth_code so frontend can authenticate
-        from homeassistant.components.auth import create_auth_code  # noqa: PLC0415
+        from homeassistant.components.auth import create_auth_code
 
         auth_code = create_auth_code(hass, client_id, credentials)
 
@@ -683,13 +682,13 @@ class GAOnboardingResetView(HomeAssistantView):
 
         # Re-register the sidebar panel if it was removed on completion.
         # Skip if already registered (e.g. onboarding was never completed).
-        from homeassistant.components.frontend import DATA_PANELS  # noqa: PLC0415
+        from homeassistant.components.frontend import DATA_PANELS
 
         # Relative import of our own package __init__ — works whether this
         # is loaded as a built-in (homeassistant.components.*) or a
         # custom_component (custom_components.*). Deferred (inside the
         # handler) to avoid a circular import: __init__.py imports http.py.
-        from . import (  # noqa: PLC0415
+        from . import (
             PANEL_URL_PATH,
             _async_register_panel,
         )

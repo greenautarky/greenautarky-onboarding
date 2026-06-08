@@ -31,7 +31,6 @@ from pathlib import Path
 from typing import Any
 
 from aiohttp import web
-
 from homeassistant.components import frontend, panel_custom
 from homeassistant.components.frontend import add_extra_js_url
 from homeassistant.components.http import StaticPathConfig
@@ -365,7 +364,7 @@ def _hide_default_ha_panels(hass: HomeAssistant) -> None:
             try:
                 frontend.async_remove_panel(hass, panel)
                 _LOGGER.debug("removed default HA panel: %s", panel)
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 # Don't let a single rename/refactor in HA Core take down setup.
                 _LOGGER.warning("failed to remove panel %s: %s", panel, e)
 
@@ -375,7 +374,7 @@ def _hide_default_ha_panels(hass: HomeAssistant) -> None:
     # async_setup completes. Listen once for HA-fully-started to sweep again.
     from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 
-    async def _on_started(_event) -> None:  # noqa: ANN001
+    async def _on_started(_event) -> None:
         _remove_all()
 
     hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _on_started)
