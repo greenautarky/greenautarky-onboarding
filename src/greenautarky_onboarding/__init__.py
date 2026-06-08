@@ -60,6 +60,7 @@ from .http import (
     GAPasswordResetView,
     GAPinVerifyView,
     _get_state,
+    _migrate_legacy_console_secret,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -157,6 +158,13 @@ async def _async_setup_common(hass: HomeAssistant) -> bool:
     hass.http.register_view(GAOnboardingCreateUserView())
     hass.http.register_view(GAOnboardingResetView())
     hass.http.register_view(GAPinVerifyView())
+
+    # v1.0.0 shipped the console-login HMAC secret at `/share/ga/…` —
+    # addon-readable, an exfil risk. v1.0.1+ keeps it under `/config/` and
+    # migrates the old file on first boot. Best-effort: failures log a
+    # warning, do NOT block setup (operator can fix perms; the view will
+    # respond 503 until the secret is in the new location).
+    await hass.async_add_executor_job(_migrate_legacy_console_secret)
 
     # Signed-token auto-login from the fleet-manager UI's "Launch admin
     # console" button. See GAConsoleLoginView for the token contract.

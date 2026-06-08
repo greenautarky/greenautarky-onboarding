@@ -2,17 +2,30 @@
 
 ## Secret storage
 
-| Secret | Wrong location | Right location |
+| Secret | Stored at | Notes |
 |---|---|---|
-| `console-login-secret` (HMAC key for operator auto-login) | ❌ `/share/ga/console-login-secret` (addon-readable!) | ✅ `/config/.storage/greenautarky_secrets/console_login_secret` (HA-Core-only) |
-| `onboarding-pin` (printed device-label PIN, used for password recovery) | ❌ `/share/ga_onboarding_pin` | ✅ `/config/.storage/greenautarky_secrets/onboarding_pin` |
+| `console-login-secret` (HMAC key for operator auto-login) | `/config/.storage/greenautarky_secrets/console_login_secret` (0600, HA-Core-only) | Moved here in `1.0.1`. Old path: `/share/ga/console-login-secret` (= addon-readable). `_migrate_legacy_console_secret()` runs at integration setup and moves the file on first boot of `1.0.1+`. |
+| `onboarding-pin` (printed device-label PIN, used for password recovery) | `hass.config.path(PIN_FILE)` → `/config/ga-onboarding-pin` (HA-Core-only) | Has always lived in `/config/` — `const.py:PIN_FILE = "ga-onboarding-pin"` is relative to `hass.config.path()`. |
 
 `/share/` is mounted into **every** addon container by HA Supervisor.
 A malicious or compromised customer-installed addon can read
-everything in there. Both secrets above MUST move to `/config/`,
-which is mounted only into the HA Core container.
+everything in there. The `/config/` mount goes only into the HA Core
+container — addons cannot reach it.
 
-Tracked as a critical TODO for `1.0.1`.
+### Migration (= 1.0.1+ first-boot behaviour)
+
+`_migrate_legacy_console_secret()` in `http.py` runs once at integration
+setup:
+
+1. If the new path exists → no-op (already migrated, or a fresh device
+   was seeded directly into `/config/`). Stale `/share/` copy is still
+   unlinked best-effort.
+2. If only the legacy path exists → copy contents → chmod 0600 →
+   unlink legacy file. Logged at INFO.
+3. On `OSError` → log warning + continue. The auto-login view then
+   returns 503 until an operator finishes the move.
+
+Idempotent. Safe to run on every boot.
 
 ## Admin protection
 

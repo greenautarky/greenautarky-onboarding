@@ -190,9 +190,18 @@ class GAAdminBypassView(HomeAssistantView):
 #   5. returns an HTML page that plants `hassTokens` in localStorage
 #      and redirects to /
 #
-# The shared secret is one fleet-wide HMAC key stored at
-# `/share/ga/console-login-secret` (0600, root-owned). ga_manager
-# converge writes it on first boot (sourced from fleet-manager's seed).
+# The shared secret is one fleet-wide HMAC key. It lives at
+# `/config/.storage/greenautarky_secrets/console_login_secret` (0600,
+# root-owned). The `/config/` mount is private to the HA Core container
+# — addons mounted on `/share/` cannot read it. ga_manager converge
+# writes it on first boot (sourced from fleet-manager's seed).
+#
+# History: in v1.0.0 the file lived at `/share/ga/console-login-secret`,
+# which was readable by every customer-installed addon (HACS-style or
+# otherwise) — a real exfil risk. v1.0.1 moves it under `/config/` AND
+# adds a migration that copies the secret over on first boot of v1.0.1+,
+# then removes the old `/share/` copy. See `_migrate_legacy_console_secret`.
+#
 # Rotating: write a new secret + restart Core. Replay-protection is
 # in-memory only; an HA restart wipes the seen-nonce set, which is fine
 # because tokens older than 5 minutes are already rejected by `exp`.
@@ -205,13 +214,72 @@ class GAAdminBypassView(HomeAssistantView):
 #     symmetric is one order of magnitude simpler to operate.
 #   - Tokens land in localStorage (not cookie) because that's where
 #     HA's frontend reads them (`hassTokens` key, JSON-encoded).
-CONSOLE_LOGIN_SECRET_FILE = Path("/share/ga/console-login-secret")
+CONSOLE_LOGIN_SECRET_FILE = Path(
+    "/config/.storage/greenautarky_secrets/console_login_secret"
+)
+LEGACY_CONSOLE_LOGIN_SECRET_FILE = Path("/share/ga/console-login-secret")
 CONSOLE_LOGIN_NONCE_WINDOW_S = 300
 CONSOLE_LOGIN_ACCESS_TOKEN_TTL_S = 1800
 # Module-level seen-nonce set (per Core process). Replaced by a real
 # cache module if we ever need multi-worker support — Core is currently
 # single-worker so a process-local set is sufficient.
 _SEEN_NONCES: dict[str, float] = {}
+
+
+def _migrate_legacy_console_secret() -> bool:
+    """Move the console-login secret from the legacy `/share/` path to
+    the v1.0.1+ `/config/.storage/greenautarky_secrets/` location.
+
+    Called once at integration setup. Idempotent: a no-op if the legacy
+    file isn't there, OR if the new file already exists. Logs but
+    doesn't raise on permission errors — the caller will then see no
+    secret at the new location and respond with 503, prompting an
+    operator to fix the permissions.
+
+    Returns True iff a migration actually happened (= secret moved),
+    False otherwise. Useful for tests + an operator audit log line.
+    """
+    if not LEGACY_CONSOLE_LOGIN_SECRET_FILE.is_file():
+        return False
+    if CONSOLE_LOGIN_SECRET_FILE.is_file():
+        # New path already populated by ga_manager converge or a manual
+        # bootstrap — DO NOT overwrite with the legacy value (which may
+        # be stale after a rotation that only hit the new path).
+        # We do still try to remove the legacy file so it can't be
+        # exfiltrated by an addon mounted on /share/.
+        try:
+            LEGACY_CONSOLE_LOGIN_SECRET_FILE.unlink()
+            _LOGGER.info(
+                "console-login: removed stale legacy file at %s (new path "
+                "already populated)", LEGACY_CONSOLE_LOGIN_SECRET_FILE,
+            )
+        except OSError as e:
+            _LOGGER.warning(
+                "console-login: could not remove legacy file %s: %s "
+                "(addons mounted on /share/ can still read it)",
+                LEGACY_CONSOLE_LOGIN_SECRET_FILE, e,
+            )
+        return False
+    try:
+        CONSOLE_LOGIN_SECRET_FILE.parent.mkdir(parents=True, exist_ok=True)
+        # Copy contents (not move) so a permission failure mid-write
+        # doesn't leave us with neither file. Then unlink legacy.
+        data = LEGACY_CONSOLE_LOGIN_SECRET_FILE.read_text(encoding="utf-8")
+        CONSOLE_LOGIN_SECRET_FILE.write_text(data, encoding="utf-8")
+        CONSOLE_LOGIN_SECRET_FILE.chmod(0o600)
+        LEGACY_CONSOLE_LOGIN_SECRET_FILE.unlink()
+        _LOGGER.info(
+            "console-login: migrated secret from %s → %s and removed legacy",
+            LEGACY_CONSOLE_LOGIN_SECRET_FILE, CONSOLE_LOGIN_SECRET_FILE,
+        )
+        return True
+    except OSError as e:
+        _LOGGER.warning(
+            "console-login: migration failed (%s): legacy file remains at "
+            "%s — operator must move it manually + chmod 0600",
+            e, LEGACY_CONSOLE_LOGIN_SECRET_FILE,
+        )
+        return False
 
 
 def _read_console_secret() -> bytes | None:

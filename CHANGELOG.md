@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.0.1 — 2026-06-08
+
+### Security
+- **Move console-login HMAC secret to the HA-Core-only `/config/`** —
+  previously stored at `/share/ga/console-login-secret`, which is
+  mounted into every customer-installed addon (HACS or otherwise). Any
+  addon could have read the secret and minted valid auto-login URLs
+  for the device. The new path is
+  `/config/.storage/greenautarky_secrets/console_login_secret` (0600,
+  inside the HA Core container — not visible to addons).
+- **Auto-migration on first boot of 1.0.1+** — `_migrate_legacy_console_secret`
+  runs at integration setup, copies the legacy file into the new
+  location, chmods it to 0600, and unlinks the legacy file so it can no
+  longer be read from `/share/`. Idempotent (no-op if already migrated).
+  Failure to migrate logs a warning, does NOT block setup — operators
+  see a 503 from the auto-login view until they finish the move.
+- Operator follow-up: re-issue the secret via fleet-manager → ga_manager
+  converge if devices in the wild may have had it exfiltrated. The new
+  location is also where fresh devices receive their seed.
+
 ## 1.0.0 — 2026-06-05 (planned)
 
 Initial extraction of `greenautarky_onboarding` from
