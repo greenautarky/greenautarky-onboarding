@@ -32,7 +32,7 @@ async def test_async_setup_returns_true(hass) -> None:
     # the HTTP component. We inject a stub so the ``register_view``
     # calls in ``_async_setup_common`` don't AttributeError.
     if not hasattr(hass, "http") or hass.http is None:
-        hass.http = MagicMock()  # noqa: SLF001 — test-only setattr
+        hass.http = MagicMock()
 
     with (
         patch(
