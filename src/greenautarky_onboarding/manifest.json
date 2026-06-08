@@ -1,0 +1,20 @@
+{
+  "domain": "greenautarky_onboarding",
+  "name": "greenautarky Onboarding",
+  "version": "1.0.0",
+  "codeowners": [
+    "@greenautarky"
+  ],
+  "config_flow": true,
+  "dependencies": [
+    "http",
+    "panel_custom",
+    "repairs"
+  ],
+  "after_dependencies": [
+    "greenautarky_telemetry",
+    "frontend"
+  ],
+  "documentation": "https://github.com/greenautarky/greenautarky-onboarding",
+  "iot_class": "local_polling"
+}

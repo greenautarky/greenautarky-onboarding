@@ -1,0 +1,28 @@
+{
+  "issues": {
+    "consent_outdated_gdpr": {
+      "title": "Datenschutzerklaerung aktualisiert",
+      "fix_flow": {
+        "step": {
+          "init": {
+            "title": "Datenschutzerklaerung ueberpruefen",
+            "description": "Unsere Datenschutzerklaerung wurde aktualisiert. Bitte ueberprüfe und bestaetige die Aenderungen."
+          }
+        }
+      },
+      "description": "Unsere Datenschutzerklaerung wurde aktualisiert. Bitte ueberprüfe und bestaetige die Aenderungen unter **Einstellungen > Reparaturen**."
+    },
+    "consent_outdated_ethernet": {
+      "title": "Ethernet-Nutzung: Zustimmung erforderlich",
+      "fix_flow": {
+        "step": {
+          "init": {
+            "title": "Ethernet-Einstellungen ueberpruefen",
+            "description": "Bitte bestaetigen Sie die Ethernet-Einstellungen erneut."
+          }
+        }
+      },
+      "description": "Bitte bestaetigen Sie die Ethernet-Einstellungen erneut."
+    }
+  }
+}

@@ -1,0 +1,43 @@
+[project]
+name = "greenautarky-onboarding"
+version = "1.0.0"
+description = "GreenAutarky tenant onboarding wizard for Home Assistant — PIN-gated setup flow, GDPR consent, password reset, signed-token operator auto-login"
+authors = [{name = "Thomas Taube", email = "thomas@greenautarky.com"}]
+license = {text = "Proprietary"}
+requires-python = ">=3.13"
+dependencies = [
+    # Runtime deps shipped via Home Assistant. The integration assumes a
+    # Home Assistant 2025.11+ host; do NOT pin homeassistant as a dep here
+    # (custom_components ship inside HA's runtime, not as a standalone pkg).
+    # The aiohttp / voluptuous / lit-related libs we use are all already
+    # part of HA's wheel set.
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=5.0",
+    "pytest-homeassistant-custom-component>=0.13",  # HA test fixtures
+    "ruff>=0.4",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "RUF"]
+ignore = ["E501"]  # line-length handled by formatter
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-v --strict-markers"

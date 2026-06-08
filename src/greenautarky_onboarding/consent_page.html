@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>greenautarky KI-Butler — Zustimmung</title>
+<style>
+  :root {
+    --ga-primary: #2B5A2A;
+    --ga-primary-light: #3D7B3B;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: Roboto, -apple-system, BlinkMacSystemFont, sans-serif;
+    color: #212121;
+    background: #fafafa;
+    min-height: 100vh;
+  }
+  .container { max-width: 480px; margin: 0 auto; padding: 48px 24px; }
+  .card {
+    background: #fff; border-radius: 16px; padding: 32px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  }
+  .brand-block { display: flex; align-items: center; gap: 16px; margin-bottom: 24px; }
+  .ga-logo { width: 64px; height: 64px; }
+  .brand-tagline { font-size: 13px; color: #5a5a5a; margin: 8px 0 0 0; }
+  .brand-tagline strong { color: var(--ga-primary); }
+  h1 { color: var(--ga-primary); font-size: 1.5rem; margin: 0 0 8px 0; }
+  p { line-height: 1.5; margin: 8px 0; }
+  .btn-primary {
+    display: block; width: 100%; padding: 12px 24px; margin-top: 24px;
+    background: var(--ga-primary); color: white; border: none;
+    border-radius: 8px; font-size: 16px; cursor: pointer; font-family: inherit;
+  }
+  .btn-primary:hover { background: var(--ga-primary-light); }
+  .btn-primary:disabled { background: #999; cursor: not-allowed; }
+  ul { padding-left: 20px; margin: 8px 0; }
+  li { margin-bottom: 4px; line-height: 1.4; }
+  a { color: var(--ga-primary-light); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .gdpr-text {
+    max-height: 200px; overflow-y: auto; padding: 12px;
+    background: #f5f5f5; border-radius: 8px; font-size: 13px;
+    line-height: 1.6; margin: 16px 0;
+  }
+  .consent-section { margin-bottom: 24px; }
+  .success-msg {
+    background: #e8f5e9; border: 1px solid #a5d6a7; border-radius: 8px;
+    padding: 16px; text-align: center; color: var(--ga-primary);
+  }
+  .already-ok {
+    background: #e8f5e9; border: 1px solid #a5d6a7; border-radius: 8px;
+    padding: 16px; text-align: center; color: var(--ga-primary);
+    margin-top: 16px;
+  }
+  .error { color: #d32f2f; font-size: 13px; margin-top: 8px; }
+  .loading { text-align: center; color: #888; padding: 24px 0; }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <div class="card">
+    <div class="brand-block">
+      <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg" class="ga-logo">
+        <circle cx="100" cy="100" r="90" fill="#2B5A2A"/>
+        <text x="100" y="115" text-anchor="middle" fill="white"
+              font-size="48" font-weight="bold" font-family="Arial,sans-serif">GA</text>
+      </svg>
+    </div>
+    <p class="brand-tagline">
+      <strong>greenautarky KI-Butler</strong> powered by Home Assistant
+    </p>
+
+    <div id="content">
+      <div class="loading">Lade...</div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  var content = document.getElementById("content");
+
+  async function loadStatus() {
+    try {
+      var resp = await fetch("/api/greenautarky_onboarding/consent/status");
+      if (resp.status === 401) {
+        content.innerHTML = '<p class="error">Du musst angemeldet sein, um diese Seite zu sehen. ' +
+          '<a href="/">Zur Anmeldung</a></p>';
+        return;
+      }
+      var data = await resp.json();
+      renderConsents(data.outdated || [], data.consents || {});
+    } catch (e) {
+      content.innerHTML = '<p class="error">Fehler beim Laden: ' + esc(e.message) + '</p>';
+    }
+  }
+
+  function renderConsents(outdated, consents) {
+    if (outdated.length === 0) {
+      content.innerHTML = '<div class="already-ok">' +
+        '<h1>Alles aktuell</h1>' +
+        '<p>Alle Zustimmungen sind auf dem neuesten Stand.</p>' +
+        '<a href="/" style="display:inline-block;margin-top:16px;color:var(--ga-primary);">Zurueck zum Dashboard</a>' +
+        '</div>';
+      return;
+    }
+
+    var html = '<h1>Aktualisierte Richtlinien</h1>' +
+      '<p>Bitte ueberprüfe und bestaetige die folgenden aktualisierten Richtlinien.</p>';
+
+    for (var i = 0; i < outdated.length; i++) {
+      var type = outdated[i];
+      html += renderConsentSection(type);
+    }
+
+    content.innerHTML = html;
+    attachHandlers(outdated);
+  }
+
+  function renderConsentSection(type) {
+    if (type === "gdpr") {
+      return '<div class="consent-section" id="section-gdpr">' +
+        '<h2 style="color:var(--ga-primary);font-size:1.1rem;margin:24px 0 8px 0;">Datenschutzerklaerung</h2>' +
+        '<div class="gdpr-text">' +
+        '<strong>Datenschutzerklaerung (aktualisiert)</strong><br><br>' +
+        'Dein greenautarky KI-Butler verarbeitet personenbezogene Daten ' +
+        'ausschliesslich lokal auf diesem Geraet. Es werden keine Daten an ' +
+        'Dritte weitergegeben, es sei denn, du aktivierst dies ausdruecklich ' +
+        '(z.B. Cloud-Integrationen oder Telemetrie).<br><br>' +
+        '<strong>Welche Daten werden verarbeitet?</strong>' +
+        '<ul><li>Geraetezustaende und Automatisierungen (lokal gespeichert)</li>' +
+        '<li>Benutzerkonto-Informationen (Name, Anmeldedaten)</li>' +
+        '<li>Optionale Telemetriedaten (nur mit deiner Zustimmung)</li></ul>' +
+        '<strong>Deine Rechte:</strong>' +
+        '<ul><li>Auskunft ueber gespeicherte Daten</li>' +
+        '<li>Loeschung deines Kontos und aller Daten</li>' +
+        '<li>Widerruf der Telemetrie-Zustimmung jederzeit</li></ul>' +
+        'Weitere Informationen findest du auf ' +
+        '<a href="https://greenautarky.com/datenschutz" target="_blank" rel="noreferrer">greenautarky.com/datenschutz</a>.' +
+        '</div>' +
+        '<button class="btn-primary" id="btn-accept-gdpr">Ich stimme zu</button>' +
+        '</div>';
+    }
+    return '<div class="consent-section"><p>Unbekannter Typ: ' + esc(type) + '</p></div>';
+  }
+
+  function attachHandlers(outdated) {
+    for (var i = 0; i < outdated.length; i++) {
+      (function(type) {
+        var btn = document.getElementById("btn-accept-" + type);
+        if (btn) {
+          btn.addEventListener("click", function() { acceptConsent(type); });
+        }
+      })(outdated[i]);
+    }
+  }
+
+  async function acceptConsent(type) {
+    var btn = document.getElementById("btn-accept-" + type);
+    if (btn) { btn.disabled = true; btn.textContent = "Wird gespeichert..."; }
+
+    try {
+      var resp = await fetch("/api/greenautarky_onboarding/consent/accept", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: type }),
+      });
+      var data = await resp.json();
+
+      if (data.status === "ok") {
+        var section = document.getElementById("section-" + type);
+        if (section) {
+          section.innerHTML = '<div class="success-msg">' +
+            '<strong>Zustimmung gespeichert</strong><br>' +
+            'Vielen Dank fuer deine Bestaetigung.</div>';
+        }
+        // Check if all consents are now up to date
+        setTimeout(function() { loadStatus(); }, 1500);
+      } else {
+        if (btn) { btn.disabled = false; btn.textContent = "Ich stimme zu"; }
+        var section = document.getElementById("section-" + type);
+        if (section) {
+          var existing = section.querySelector(".error");
+          if (existing) existing.remove();
+          section.insertAdjacentHTML("beforeend",
+            '<p class="error">' + esc(data.message || "Fehler beim Speichern.") + '</p>');
+        }
+      }
+    } catch (e) {
+      if (btn) { btn.disabled = false; btn.textContent = "Ich stimme zu"; }
+    }
+  }
+
+  function esc(s) {
+    var d = document.createElement("div");
+    d.textContent = s;
+    return d.innerHTML;
+  }
+
+  loadStatus();
+})();
+</script>
+</body>
+</html>

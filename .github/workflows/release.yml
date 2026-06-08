@@ -1,0 +1,80 @@
+name: Release
+
+# Publishes a self-contained OCI artifact at
+# ghcr.io/greenautarky/greenautarky-onboarding:<tag> that the
+# ha-operating-system buildroot package pulls at OS build time.
+# Same pattern as greenautarky/ga-frontend-bundle.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (default: tag-derived)"
+        required: false
+
+permissions:
+  contents: write   # create the GitHub Release
+  packages: write   # push the OCI artifact to GHCR
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version + assert it matches pyproject + manifest
+        id: ver
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "push" ]; then
+            REQ="${GITHUB_REF_NAME#v}"
+          else
+            REQ="${{ github.event.inputs.version }}"
+            [ -z "$REQ" ] && REQ=$(grep '^version' pyproject.toml | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+          fi
+          PY=$(grep '^version' pyproject.toml | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+          MF=$(python -c "import json; print(json.load(open('src/greenautarky_onboarding/manifest.json'))['version'])")
+          if [ "$REQ" != "$PY" ] || [ "$REQ" != "$MF" ]; then
+            echo "::error::Version drift — tag=$REQ pyproject=$PY manifest=$MF"
+            exit 1
+          fi
+          echo "version=$REQ" >> "$GITHUB_OUTPUT"
+          echo "Publishing v$REQ"
+
+      - name: Package the placement artifact
+        run: |
+          V="${{ steps.ver.outputs.version }}"
+          # Tarball root is the component dir, so a consumer extracts straight
+          # into /config/custom_components/ (tar xzf - -C .../custom_components).
+          tar czf "greenautarky-onboarding-${V}.tar.gz" \
+            -C src greenautarky_onboarding
+          sha256sum "greenautarky-onboarding-${V}.tar.gz" > SHA256SUMS
+          echo "--- SHA256SUMS ---"; cat SHA256SUMS
+
+      - name: Install oras
+        uses: oras-project/setup-oras@v1
+
+      - name: Push OCI artifact to GHCR
+        run: |
+          V="${{ steps.ver.outputs.version }}"
+          REPO="ghcr.io/greenautarky/greenautarky-onboarding"
+          echo "${{ secrets.GITHUB_TOKEN }}" | oras login ghcr.io -u "${{ github.actor }}" --password-stdin
+          oras push "${REPO}:${V}" \
+            --annotation "org.opencontainers.image.source=https://github.com/greenautarky/greenautarky-onboarding" \
+            --annotation "org.opencontainers.image.version=${V}" \
+            "greenautarky-onboarding-${V}.tar.gz:application/gzip" \
+            "SHA256SUMS:text/plain"
+          oras tag "${REPO}:${V}" latest
+
+      - name: Create / update the GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          V="${{ steps.ver.outputs.version }}"
+          NOTES="greenautarky-onboarding v${V} — see CHANGELOG.md for details. Placement artifact: greenautarky-onboarding-${V}.tar.gz — extract into /config/custom_components/. Also at ghcr.io/greenautarky/greenautarky-onboarding:${V}."
+          gh release create "v${V}" --title "v${V}" --notes "$NOTES" \
+            "greenautarky-onboarding-${V}.tar.gz" "SHA256SUMS" \
+          || gh release upload "v${V}" \
+            "greenautarky-onboarding-${V}.tar.gz" "SHA256SUMS" --clobber

@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: pip install ruff
+      - name: Ruff
+        run: ruff check src/ tests/
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Install
+        run: pip install -e .[dev]
+      - name: Pytest
+        run: pytest tests/ -v --cov=src/greenautarky_onboarding --cov-report=term
+
+  build-consistency:
+    # Sanity: the integration's `manifest.json` version must match
+    # `pyproject.toml` version. Bumping one without the other has bitten
+    # us before (drift between OS-pinned version + manifest-reported).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compare versions
+        run: |
+          py_ver=$(grep '^version' pyproject.toml | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+          mf_ver=$(python -c "import json; print(json.load(open('src/greenautarky_onboarding/manifest.json'))['version'])")
+          echo "pyproject: $py_ver"
+          echo "manifest:  $mf_ver"
+          [ "$py_ver" = "$mf_ver" ] || { echo "::error::version drift"; exit 1; }
