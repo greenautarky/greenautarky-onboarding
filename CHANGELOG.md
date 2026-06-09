@@ -1,5 +1,43 @@
 # Changelog
 
+## 1.0.3 — 2026-06-09
+
+### Security — onboarding PIN moved to /config/.storage/
+
+The physical-access PIN that gates wizard sign-up + password recovery
+was stored at `/config/ga-onboarding-pin` in v1.0.0..1.0.2. That path
+is readable by any Home Assistant addon that declares
+`map: [config:rw]` in its `config.yaml` — a real exfil risk, and the
+same threat-model issue that drove the v1.0.1 console-login secret move.
+
+This release:
+
+- Moves the PIN file from `/config/ga-onboarding-pin` to
+  `/config/.storage/greenautarky_secrets/onboarding_pin` (= same
+  directory used since v1.0.1 for the console-login HMAC secret).
+- Adds an idempotent migration that runs once at integration setup
+  (`_migrate_legacy_pin`), copies the legacy file over, removes it,
+  and `chmod`s the new file 0600.
+- If both files exist (= operator wrote the new one manually after a
+  PIN rotation), the legacy file is removed and the new one preserved.
+- Best-effort: a permission failure logs a warning, does NOT block
+  integration setup. The `pin_required` view will reflect "no PIN" if
+  the file ends up unreadable — operator can fix permissions.
+
+The `.storage/` location is convention-private to HA Core. Addons that
+respect HA's convention (= the overwhelming majority) won't see it
+even with `[config:rw]`. Technically the only filesystem barrier
+remains the same as before — but the convention drops the risk to
+"deliberately misbehaving addon" instead of "any addon with config
+access."
+
+### Companion changes outside this repo
+- `ha-operating-system` `tests/ga_tests/e2e_user_flows/test.sh` ships
+  in the same Buildroot OS image that pins this release; its PIN_FILE
+  path moved to the new location in the same commit.
+- `ha-operating-system` `version.yaml` pins this release for the next
+  OS build (BOSv1.2.8).
+
 ## 1.0.2 — 2026-06-09
 
 ### Fixed — missing Store migration handler crashed setup

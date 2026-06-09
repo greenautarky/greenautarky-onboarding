@@ -61,6 +61,7 @@ from .http import (
     GAPinVerifyView,
     _get_state,
     _migrate_legacy_console_secret,
+    _migrate_legacy_pin,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -189,6 +190,13 @@ async def _async_setup_common(hass: HomeAssistant) -> bool:
     # warning, do NOT block setup (operator can fix perms; the view will
     # respond 503 until the secret is in the new location).
     await hass.async_add_executor_job(_migrate_legacy_console_secret)
+
+    # v1.0.0..1.0.2 stored the onboarding PIN at `/config/ga-onboarding-pin`
+    # — readable by any addon that maps `[config:rw]`. v1.0.3+ moves it
+    # under `.storage/greenautarky_secrets/onboarding_pin` (= HA Core
+    # convention for private files). Same migration shape as the console
+    # secret above; same best-effort policy.
+    await hass.async_add_executor_job(_migrate_legacy_pin, hass)
 
     # Signed-token auto-login from the fleet-manager UI's "Launch admin
     # console" button. See GAConsoleLoginView for the token contract.

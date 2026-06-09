@@ -27,7 +27,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 
 from .consent import async_record_consent, get_outdated_consents
-from .const import DOMAIN, PIN_FILE, PIN_MAX_DELAY
+from .const import DOMAIN, PIN_FILE, PIN_FILE_LEGACY, PIN_MAX_DELAY
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -70,8 +70,68 @@ def _check_not_completed(hass: HomeAssistant) -> web.Response | None:
 
 
 def _pin_file_path(hass: HomeAssistant) -> Path:
-    """Get the path to the onboarding PIN file."""
+    """Get the path to the onboarding PIN file (v1.0.3+ location).
+
+    `.storage/greenautarky_secrets/onboarding_pin` — same filesystem as
+    the v1.0.2 path but inside HA Core's private dir. Co-located with
+    the console-login secret moved in v1.0.1.
+    """
     return Path(hass.config.path(PIN_FILE))
+
+
+def _legacy_pin_file_path(hass: HomeAssistant) -> Path:
+    """Get the path to the v1.0.0..1.0.2 PIN file (= legacy)."""
+    return Path(hass.config.path(PIN_FILE_LEGACY))
+
+
+def _migrate_legacy_pin(hass: HomeAssistant) -> bool:
+    """Move the PIN file from the legacy `/config/ga-onboarding-pin` path
+    to the v1.0.3+ `/config/.storage/greenautarky_secrets/onboarding_pin`
+    location.
+
+    Called once at integration setup. Idempotent: a no-op if the legacy
+    file isn't there, OR if the new file already exists. Mirrors the
+    console-login secret migration (= _migrate_legacy_console_secret).
+
+    Returns True iff a migration actually happened.
+    """
+    legacy = _legacy_pin_file_path(hass)
+    new = _pin_file_path(hass)
+    if not legacy.is_file():
+        return False
+    if new.is_file():
+        # New path already populated (= a fresh v1.0.3 device wrote it
+        # directly). Don't overwrite with the legacy value; remove legacy
+        # so an addon mounted on /config can't still read the old copy.
+        try:
+            legacy.unlink()
+            _LOGGER.info(
+                "onboarding-pin: removed stale legacy file at %s "
+                "(new path already populated)", legacy,
+            )
+        except OSError as e:
+            _LOGGER.warning(
+                "onboarding-pin: could not remove legacy file %s: %s",
+                legacy, e,
+            )
+        return False
+    try:
+        new.parent.mkdir(parents=True, exist_ok=True)
+        data = legacy.read_text(encoding="utf-8")
+        new.write_text(data, encoding="utf-8")
+        new.chmod(0o600)
+        legacy.unlink()
+        _LOGGER.info(
+            "onboarding-pin: migrated PIN from %s → %s and removed legacy",
+            legacy, new,
+        )
+        return True
+    except OSError as e:
+        _LOGGER.warning(
+            "onboarding-pin: legacy migration failed (%s → %s): %s",
+            legacy, new, e,
+        )
+        return False
 
 
 def _pin_required(hass: HomeAssistant) -> bool:
