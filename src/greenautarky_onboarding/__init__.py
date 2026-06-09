@@ -95,6 +95,27 @@ def _migrate_v1_to_v2(state: dict[str, Any]) -> dict[str, Any]:
     return state
 
 
+class _MigratableStore(Store):
+    """A Store subclass that knows how to migrate v1 → v2 state.
+
+    Required because HA's base Store raises NotImplementedError from
+    `_async_migrate_func` if a stored entry has a version OLDER than
+    the one we pass to `Store(hass, STORAGE_VERSION, ...)`. Without this
+    override, ANY v1 state file on disk would crash setup outright —
+    which is exactly how K31 BOSv1.2.6 bench testing caught the gap.
+    """
+
+    async def _async_migrate_func(
+        self,
+        old_major_version: int,
+        old_minor_version: int,
+        old_data: dict[str, Any],
+    ) -> dict[str, Any]:
+        if old_major_version < 2:
+            return _migrate_v1_to_v2(old_data)
+        return old_data
+
+
 async def _async_setup_common(hass: HomeAssistant) -> bool:
     """Shared setup logic — called from both async_setup (yaml) and async_setup_entry (config_flow).
 
@@ -103,7 +124,10 @@ async def _async_setup_common(hass: HomeAssistant) -> bool:
     if DOMAIN in hass.data:
         return True
 
-    store: Store[dict[str, Any]] = Store(hass, STORAGE_VERSION, STORAGE_KEY)
+    # Use the migration-aware Store subclass — without it any state file
+    # written by a prior version (v1) crashes setup with NotImplementedError
+    # on the base _async_migrate_func. See _MigratableStore docstring.
+    store: Store[dict[str, Any]] = _MigratableStore(hass, STORAGE_VERSION, STORAGE_KEY)
     state = await store.async_load()
 
     # `loaded_from_storage` distinguishes a real GA-provisioned device from

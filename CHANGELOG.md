@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.0.2 — 2026-06-09
+
+### Fixed — missing Store migration handler crashed setup
+Setup of `greenautarky_onboarding` crashed with `NotImplementedError`
+out of `homeassistant.helpers.storage._async_migrate_func` whenever a
+v1 storage entry existed on disk. The integration shipped
+`STORAGE_VERSION=2` and a `_migrate_v1_to_v2()` helper, but never wired
+the helper into the `Store` class — HA's base implementation just raises
+when it sees a stale version.
+
+A new `_MigratableStore(Store)` subclass now overrides
+`_async_migrate_func` to call `_migrate_v1_to_v2` for any `<2` major
+version. `_async_setup_common` constructs that subclass instead of the
+bare `Store`.
+
+Caught by the new on-device E2E suite
+`tests/ga_tests/e2e_user_flows/test.sh` on K31 BOSv1.2.6 (2026-06-09):
+the suite wrote a v1 state file to simulate a fresh-provisioned device,
+which exposed the missing migration handler.
+
 ## 1.0.1 — 2026-06-08
 
 ### Security
