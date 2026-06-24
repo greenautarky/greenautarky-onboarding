@@ -584,6 +584,45 @@ class GAOnboardingGDPRView(HomeAssistantView):
         return self.json({"status": "ok"})
 
 
+class GALedConfigView(HomeAssistantView):
+    """Read/set the iHost status-LED on/off preference.
+
+    The status LED is driven at runtime by ga_manager (Yellow=starting,
+    Green=connected, Breathing Red=error). A customer can turn it off;
+    this view persists ``led_disabled`` into the onboarding HA Store and
+    ga_manager reads it from
+    ``/homeassistant/.storage/greenautarky_onboarding`` to decide whether
+    to drive the ring or set it Off.
+
+    Settable any time post-install (no onboarding-completion guard), so
+    no ``_check_not_completed`` / ``_check_pin_verified`` gating here.
+    """
+
+    url = "/api/greenautarky_onboarding/led"
+    name = "api:greenautarky_onboarding:led"
+    requires_auth = False
+
+    async def get(self, request: web.Request) -> web.Response:
+        """Return the current LED on/off preference."""
+        hass: HomeAssistant = request.app["hass"]
+        state = _get_state(hass)
+        return self.json({"led_disabled": bool(state.get("led_disabled", False))})
+
+    async def post(self, request: web.Request) -> web.Response:
+        """Set the LED on/off preference."""
+        hass: HomeAssistant = request.app["hass"]
+        state = _get_state(hass)
+        store = _get_store(hass)
+
+        body = await request.json()
+        state["led_disabled"] = bool(body.get("led_disabled", False))
+        state["led_modified"] = datetime.now(UTC).isoformat()
+        state["led_modified_by"] = "gaci"
+        await store.async_save(state)
+
+        return self.json({"status": "ok", "led_disabled": state["led_disabled"]})
+
+
 class GAOnboardingTelemetryView(HomeAssistantView):
     """Handle telemetry preferences."""
 
