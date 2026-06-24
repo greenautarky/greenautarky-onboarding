@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.0.4 — 2026-06-24
+
+### feat(led): customer LED on/off endpoint (`GALedConfigView`)
+
+New `GET`/`POST /api/greenautarky_onboarding/led` endpoint that reads and
+persists a `led_disabled` preference into the onboarding HA Store
+(`.storage/greenautarky_onboarding`). ga_manager's status-LED driver
+(ga_manager 0.53.0) reads this flag and sets the iHost ring to `Off` when
+the customer turns the status LED off; otherwise it drives the ring to
+reflect device state (starting/connected/error). Settable any time
+post-install (no onboarding-completion guard). The GACI app POSTs here
+from its LED toggle.
+
 ## 1.0.3 — 2026-06-09
 
 ### Security — onboarding PIN moved to /config/.storage/
