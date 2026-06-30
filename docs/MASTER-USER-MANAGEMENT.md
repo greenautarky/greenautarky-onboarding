@@ -60,6 +60,11 @@ Security-sensitive — ship with tests: non-master rejected on every op;
 parent-relation enforced (no cross-master access); flag missing/malformed fails
 closed; invite-PIN one-time + TTL + backoff; join only post-completion + creates
 Non-Admin + auto-parent; device wizard regression-safe; matrix → visibility.
+
+Plus a **Playwright E2E** (after integration + build) mirroring the existing
+onboarding E2E in `ha-operating-system/tests/e2e/tests/` (e.g.
+`sub-user-join.spec.ts`): open the link, enter invite PIN + password, assert a
+Non-Admin account is created, logs in, and sees only assigned dashboards.
 See ADR-0006 §Testing requirements.
 
 ## Notes
