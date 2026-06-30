@@ -50,6 +50,11 @@ ethernet / info).
   `_check_pin_verified` backoff/lockout machinery.
 - On valid PIN: create a **Non-Admin** user (`create_user`, `GROUP_ID_USER`) and
   **auto-link parent = the issuing master**, then invalidate the invite.
+- **Mirror native onboarding: create a linked Person too.** After `create_user`,
+  call `person.async_create_person(hass, name, user_id=user.id)` (exactly what
+  `onboarding/views.py` does for the owner). 1:1 User + linked Person. The Person
+  is created **empty (no `device_trackers`) → no location**; presence is opt-in.
+  Permissions stay per-User; the Person is just the presence/automation layer.
 - The new join route must **not** be gated on `completed == false` (today the
   redirect, sidebar panel, and IndexView fallthrough all key on `completed`).
 - **Consent** is deferred to the privacy review — join is PIN+password only.
