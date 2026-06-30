@@ -116,6 +116,9 @@ async def _issue_invite(hass, master, ttl_hours: int | None = None) -> str:
 
 def test_read_master_user_ids_missing_file(hass) -> None:
     """No flag file → empty set (fail closed, no masters)."""
+    path = Path(hass.config.path(MASTER_USERS_FILE))
+    if path.exists():
+        path.unlink()  # the test config dir can persist across runs
     assert _read_master_user_ids(hass) == set()
 
 

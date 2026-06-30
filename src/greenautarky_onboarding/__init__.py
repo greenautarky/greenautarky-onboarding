@@ -48,6 +48,7 @@ from .http import (
     GAConsentStatusView,
     GAConsoleLoginView,
     GALedConfigView,
+    GAMasterConsolePageView,
     GAOnboardingCompleteView,
     GAOnboardingCreateUserView,
     GAOnboardingEthernetView,
@@ -60,9 +61,13 @@ from .http import (
     GAPasswordResetUsersView,
     GAPasswordResetView,
     GAPinVerifyView,
+    GASubUserAssignDashboardView,
     GASubUserInviteView,
     GASubUserJoinPageView,
     GASubUserJoinView,
+    GASubUserManageView,
+    GASubUserRenameAreaView,
+    GASubUserSetMasterView,
     _get_state,
     _migrate_legacy_console_secret,
     _migrate_legacy_pin,
@@ -196,6 +201,15 @@ async def _async_setup_common(hass: HomeAssistant) -> bool:
     hass.http.register_view(GASubUserInviteView())
     hass.http.register_view(GASubUserJoinPageView())
     hass.http.register_view(GASubUserJoinView())
+
+    # Master management plane (PROTOTYPE) — ADR-0006. Master-authenticated,
+    # in-process privileged ops (dashboard assign + room rename); set_master is
+    # admin-only (prod provisioning = ga_manager). Entity rename is deferred.
+    hass.http.register_view(GASubUserSetMasterView())
+    hass.http.register_view(GASubUserManageView())
+    hass.http.register_view(GASubUserAssignDashboardView())
+    hass.http.register_view(GASubUserRenameAreaView())
+    hass.http.register_view(GAMasterConsolePageView())
 
     # v1.0.0 shipped the console-login HMAC secret at `/share/ga/…` —
     # addon-readable, an exfil risk. v1.0.1+ keeps it under `/config/` and

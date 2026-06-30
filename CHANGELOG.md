@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### feat(sub-user): master management plane — prototype (ADR-0006)
+
+Builds on the join foundation. Scoped, master-authenticated, in-process
+privileged ops (HA's Lovelace write WS is admin-only, so a Non-Admin master
+cannot do these from the browser — the component does):
+
+- `POST .../sub_user/set_master` — **admin-only** add/remove the master flag in
+  `/config/ga/ga-master-users.json` (prototype/manual provisioning; production
+  writes this via ga_manager).
+- `GET .../sub_user/list` — master-gated; returns the master's own sub-users +
+  available dashboards + areas.
+- `POST .../sub_user/assign_dashboard` — master-gated, parent-enforced; updates
+  the `[sub-user × dashboard]` matrix and reconciles native **per-view
+  `visible`** (assigned sub-users + masters visible; empty → stripped).
+- `POST .../sub_user/rename_area` — master-gated room rename via the area
+  registry.
+- `GET /greenautarky-master` — prototype Master console page (the production UI
+  is a Lovelace custom card in ga-frontend-bundle).
+
+**Entity (sensor) rename is intentionally deferred.** 9 new tests (set_master
+admin-gate, master-gated list scoped to own children, dashboard assign +
+real `visible` reconcile against a LovelaceStorage, room rename). Not deployed —
+privacy-review-gated.
+
 ### feat(sub-user): household sub-user join foundation (ADR-0006)
 
 First slice of the Master-User Management Plane. A "Master-User" (a HA
