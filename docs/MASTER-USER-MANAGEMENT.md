@@ -36,6 +36,32 @@ pattern the Master plane needs.
 - The `[Sub-User × Dashboard]` matrix is held by this component (in `.storage`)
   and reconciled into HA-native dashboard visibility.
 
+## Sub-user join sub-flow (decided 2026-06-30)
+
+Sub-users self-register via the **same link** as device setup, but through a
+**separate, repeatable** sub-flow that runs **after** `state["completed"] == true`
+(the one-shot device wizard stays unchanged). The join page asks only **PIN +
+password** (+ display name) and skips the device-level steps (GDPR / telemetry /
+ethernet / info).
+
+- **Gate = master-issued one-time invite PIN with TTL.** The master generates it
+  from the Master card; store it like the existing onboarding PIN (under
+  `.storage/greenautarky_secrets/`) with TTL + one-time-invalidate; reuse the
+  `_check_pin_verified` backoff/lockout machinery.
+- On valid PIN: create a **Non-Admin** user (`create_user`, `GROUP_ID_USER`) and
+  **auto-link parent = the issuing master**, then invalidate the invite.
+- The new join route must **not** be gated on `completed == false` (today the
+  redirect, sidebar panel, and IndexView fallthrough all key on `completed`).
+- **Consent** is deferred to the privacy review — join is PIN+password only.
+
+## Tests (required on implementation)
+
+Security-sensitive — ship with tests: non-master rejected on every op;
+parent-relation enforced (no cross-master access); flag missing/malformed fails
+closed; invite-PIN one-time + TTL + backoff; join only post-completion + creates
+Non-Admin + auto-parent; device wizard regression-safe; matrix → visibility.
+See ADR-0006 §Testing requirements.
+
 ## Notes
 
 - The master flag file `/config/ga/ga-master-users.json` is **written by us
