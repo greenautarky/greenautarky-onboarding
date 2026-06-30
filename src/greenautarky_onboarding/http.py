@@ -9,9 +9,12 @@ Consent views are authenticated and available after onboarding is complete.
 from __future__ import annotations
 
 import base64
+import hashlib
 import hmac
 import json
 import logging
+import re
+import secrets
 import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -27,7 +30,19 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 
 from .consent import async_record_consent, get_outdated_consents
-from .const import DOMAIN, PIN_FILE, PIN_FILE_LEGACY, PIN_MAX_DELAY
+from .const import (
+    DOMAIN,
+    INVITE_PIN_ALPHABET,
+    INVITE_PIN_LENGTH,
+    MASTER_USERS_FILE,
+    PIN_FILE,
+    PIN_FILE_LEGACY,
+    PIN_MAX_DELAY,
+    SUB_USER_INVITE_DEFAULT_TTL_H,
+    SUB_USER_INVITE_MAX_TTL_H,
+    SUB_USER_JOIN_MAX_DELAY,
+    SUB_USER_MIN_PASSWORD_LEN,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -45,6 +60,9 @@ _CONSENT_HTML = (Path(__file__).parent / "consent_page.html").read_text(
     encoding="utf-8"
 )
 _PW_RESET_HTML = (Path(__file__).parent / "password_reset_page.html").read_text(
+    encoding="utf-8"
+)
+_SUB_USER_JOIN_HTML = (Path(__file__).parent / "sub_user_join_page.html").read_text(
     encoding="utf-8"
 )
 
@@ -1261,3 +1279,316 @@ class GAConsentAcceptView(HomeAssistantView):
             )
 
         return self.json({"status": "ok"})
+
+
+# ---------------------------------------------------------------------------
+# Sub-user (household) management — ADR-0006
+#
+# A "Master-User" (a HA Non-Admin flagged in /config/ga/ga-master-users.json,
+# written by ga_manager) can invite "Sub-Users". Sub-users self-register via
+# the SAME link, post-completion, entering only an invite-PIN + password +
+# display name. We mirror native HA onboarding: create a Non-Admin User AND a
+# linked Person (empty → no location). The new user is auto-linked to the
+# issuing master (parent map in the onboarding Store).
+#
+# Security: the master flag + parent map are the server-side boundary. The
+# invite PIN is one-time, TTL-bounded, stored hashed; bad join attempts hit an
+# exponential backoff. Dashboard assignment + the 4 scoped management ops are a
+# later increment (ADR-0006 §Implementation map) — NOT in this foundation.
+# ---------------------------------------------------------------------------
+
+
+def _master_users_path(hass: HomeAssistant) -> Path:
+    """Path to the master-user allowlist (read-only here; ga_manager writes)."""
+    return Path(hass.config.path(MASTER_USERS_FILE))
+
+
+def _read_master_user_ids(hass: HomeAssistant) -> set[str]:
+    """Return the set of HA user-ids flagged as masters.
+
+    Fail CLOSED: a missing or malformed file yields an empty set (no masters),
+    so a broken/absent flag can never grant privilege. Format:
+    ``{"masters": [{"ha_user_id": "<uuid>"}, ...]}``.
+    """
+    path = _master_users_path(hass)
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return set()
+    try:
+        data = json.loads(raw)
+    except (ValueError, TypeError):
+        _LOGGER.warning("master-users: %s is not valid JSON — treating as empty", path)
+        return set()
+    ids: set[str] = set()
+    for entry in data.get("masters") or []:
+        uid = (entry or {}).get("ha_user_id") if isinstance(entry, dict) else None
+        if isinstance(uid, str) and uid:
+            ids.add(uid)
+    return ids
+
+
+def _is_master(hass: HomeAssistant, user_id: str | None) -> bool:
+    """True iff user_id is a flagged master (re-checked on every call)."""
+    return bool(user_id) and user_id in _read_master_user_ids(hass)
+
+
+def _hash_invite_pin(pin: str) -> str:
+    """sha256 hex of an invite PIN (we never store the plaintext)."""
+    return hashlib.sha256(pin.encode("utf-8")).hexdigest()
+
+
+def _gen_invite_pin() -> str:
+    """Cryptographically-random invite PIN from an unambiguous alphabet."""
+    return "".join(secrets.choice(INVITE_PIN_ALPHABET) for _ in range(INVITE_PIN_LENGTH))
+
+
+def _normalize_invite_pin(raw: str) -> str:
+    """Normalize user input: upper-case, strip spaces/dashes."""
+    return raw.strip().upper().replace("-", "").replace(" ", "")
+
+
+def _prune_invites(invites: list[dict[str, Any]], now: datetime) -> list[dict[str, Any]]:
+    """Drop expired/malformed invites."""
+    out: list[dict[str, Any]] = []
+    for inv in invites:
+        try:
+            if datetime.fromisoformat(inv["exp"]) > now:
+                out.append(inv)
+        except (KeyError, TypeError, ValueError):
+            continue
+    return out
+
+
+def _slugify_username(name: str) -> str:
+    """Derive a base username from a display name (lowercase alnum + '_')."""
+    base = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
+    return base or "user"
+
+
+class GASubUserInviteView(HomeAssistantView):
+    """Master-only: mint a one-time sub-user invite PIN with a TTL.
+
+    Returns the plaintext PIN ONCE (for the master to share); only its hash,
+    the issuing master's user-id, and the expiry are stored. The caller must be
+    an authenticated user flagged in the master allowlist.
+    """
+
+    url = "/api/greenautarky_onboarding/sub_user/invite"
+    name = "api:greenautarky_onboarding:sub_user_invite"
+    requires_auth = True
+
+    async def post(self, request: web.Request) -> web.Response:
+        """Issue an invite for the authenticated master."""
+        hass: HomeAssistant = request.app["hass"]
+        user = request["hass_user"]
+        if not _is_master(hass, getattr(user, "id", None)):
+            return web.json_response(
+                {"message": "Master privileges required"}, status=403
+            )
+
+        body = await request.json()
+        try:
+            ttl_h = int(body.get("ttl_hours", SUB_USER_INVITE_DEFAULT_TTL_H))
+        except (TypeError, ValueError):
+            ttl_h = SUB_USER_INVITE_DEFAULT_TTL_H
+        ttl_h = max(1, min(ttl_h, SUB_USER_INVITE_MAX_TTL_H))
+
+        state = _get_state(hass)
+        store = _get_store(hass)
+        now = datetime.now(UTC)
+        invites = _prune_invites(state.get("sub_user_invites", []), now)
+
+        pin = _gen_invite_pin()
+        exp = now + timedelta(hours=ttl_h)
+        invites.append(
+            {
+                "pin_sha256": _hash_invite_pin(pin),
+                "master_user_id": user.id,
+                "exp": exp.isoformat(),
+                "created_at": now.isoformat(),
+            }
+        )
+        state["sub_user_invites"] = invites
+        await store.async_save(state)
+
+        _LOGGER.info("sub-user invite issued by master %s (ttl %dh)", user.id, ttl_h)
+        return self.json(
+            {"pin": pin, "expires_at": exp.isoformat(), "ttl_hours": ttl_h}
+        )
+
+
+class GASubUserJoinPageView(HomeAssistantView):
+    """Serve the self-contained sub-user self-registration page.
+
+    Same link family as device setup, but a SEPARATE, REPEATABLE route that
+    works AFTER device onboarding is complete (the one-shot wizard is gated on
+    ``completed``; this is not). Unauthenticated — the invite PIN is the gate.
+    """
+
+    url = "/greenautarky-join"
+    name = "greenautarky_onboarding:join_page"
+    requires_auth = False
+
+    async def get(self, request: web.Request) -> web.Response:
+        """Return the join page HTML."""
+        return web.Response(text=_SUB_USER_JOIN_HTML, content_type="text/html")
+
+
+class GASubUserJoinView(HomeAssistantView):
+    """Redeem a one-time invite PIN → create a Non-Admin User + linked Person.
+
+    Unauthenticated (the sub-user has no account yet); the invite PIN is the
+    gate, backed by an exponential backoff on bad attempts. On success the user
+    is auto-linked to the issuing master (parent map) and the invite consumed.
+    Mirrors native onboarding: User (GROUP_ID_USER) + linked Person (empty).
+    """
+
+    url = "/api/greenautarky_onboarding/sub_user/join"
+    name = "api:greenautarky_onboarding:sub_user_join"
+    requires_auth = False
+
+    async def post(self, request: web.Request) -> web.Response:
+        """Validate the invite and create the sub-user account."""
+        hass: HomeAssistant = request.app["hass"]
+        state = _get_state(hass)
+        store = _get_store(hass)
+        now = datetime.now(UTC)
+
+        # Global backoff on repeated bad invite attempts.
+        locked_until = state.get("sub_user_join_locked_until")
+        if locked_until:
+            remaining = (
+                datetime.fromisoformat(locked_until) - now
+            ).total_seconds()
+            if remaining > 0:
+                return self.json(
+                    {
+                        "status": "locked",
+                        "message": "Too many attempts",
+                        "retry_after": int(remaining),
+                    },
+                    status_code=429,
+                )
+
+        body = await request.json()
+        name = (body.get("name") or "").strip()
+        password = body.get("password") or ""
+        submitted = _normalize_invite_pin(body.get("invite_pin") or "")
+        client_id = (body.get("client_id") or "").strip()
+
+        if not name or not password or not submitted:
+            return self.json_message(
+                "name, password and invite_pin are required", status_code=400
+            )
+        if len(password) < SUB_USER_MIN_PASSWORD_LEN:
+            return self.json_message(
+                f"password too short (min {SUB_USER_MIN_PASSWORD_LEN})",
+                status_code=400,
+            )
+
+        invites = _prune_invites(state.get("sub_user_invites", []), now)
+        submitted_hash = _hash_invite_pin(submitted)
+        match: dict[str, Any] | None = None
+        for inv in invites:
+            if hmac.compare_digest(inv.get("pin_sha256", ""), submitted_hash):
+                match = inv
+                break
+
+        if match is None:
+            # Invalid/expired invite → increment attempts + exponential backoff.
+            attempts = state.get("sub_user_join_attempts", 0) + 1
+            state["sub_user_join_attempts"] = attempts
+            delay = 0
+            if attempts >= 2:
+                delay = min(5 * (2 ** (attempts - 2)), SUB_USER_JOIN_MAX_DELAY)
+                state["sub_user_join_locked_until"] = (
+                    now + timedelta(seconds=delay)
+                ).isoformat()
+            state["sub_user_invites"] = invites  # persist the prune
+            await store.async_save(state)
+            _LOGGER.warning(
+                "sub-user join: invalid invite (attempt %d, next retry %ds)",
+                attempts,
+                delay,
+            )
+            return self.json(
+                {
+                    "status": "error",
+                    "message": "Invalid or expired invite",
+                    "retry_after": delay,
+                },
+                status_code=401,
+            )
+
+        # Revocation safety: the issuing master must still be authorized.
+        master_user_id = match.get("master_user_id")
+        if not _is_master(hass, master_user_id):
+            state["sub_user_invites"] = [i for i in invites if i is not match]
+            await store.async_save(state)
+            _LOGGER.warning(
+                "sub-user join: issuing master %s no longer authorized",
+                master_user_id,
+            )
+            return self.json_message(
+                "Invite issuer is no longer authorized", status_code=403
+            )
+
+        # Create the Non-Admin user.
+        user = await hass.auth.async_create_user(name, group_ids=[GROUP_ID_USER])
+
+        # Allocate a unique username derived from the display name.
+        provider = _async_get_hass_provider(hass)
+        await provider.async_initialize()
+        base = _slugify_username(name)
+        username = base
+        suffix = 1
+        while True:
+            try:
+                await provider.async_add_auth(username, password)
+                break
+            except InvalidUser:
+                username = f"{base}{suffix}"
+                suffix += 1
+                if suffix > 50:
+                    await hass.auth.async_remove_user(user)
+                    return self.json_message(
+                        "Could not allocate a username", status_code=500
+                    )
+        credentials = await provider.async_get_or_create_credentials(
+            {"username": username}
+        )
+        await hass.auth.async_link_user(user, credentials)
+
+        # Mirror native onboarding: create a linked Person (empty — no
+        # device_trackers → no location; presence stays opt-in).
+        if "person" in hass.config.components:
+            from homeassistant.components import person
+
+            await person.async_create_person(hass, name, user_id=user.id)
+
+        # Record the parent relationship + consume the one-time invite.
+        sub_users = state.get("sub_users", {})
+        sub_users[user.id] = {
+            "master": master_user_id,
+            "created_at": now.isoformat(),
+        }
+        state["sub_users"] = sub_users
+        state["sub_user_invites"] = [i for i in invites if i is not match]
+        state["sub_user_join_attempts"] = 0
+        state["sub_user_join_locked_until"] = None
+        await store.async_save(state)
+
+        _LOGGER.info(
+            "sub-user '%s' (user %s) joined under master %s",
+            username,
+            user.id,
+            master_user_id,
+        )
+
+        response: dict[str, Any] = {"status": "ok", "username": username}
+        if client_id:
+            from homeassistant.components.auth import create_auth_code
+
+            response["auth_code"] = create_auth_code(hass, client_id, credentials)
+        return self.json(response)

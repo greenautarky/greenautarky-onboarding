@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+### feat(sub-user): household sub-user join foundation (ADR-0006)
+
+First slice of the Master-User Management Plane. A "Master-User" (a HA
+Non-Admin flagged in `/config/ga/ga-master-users.json`, written by ga_manager
+— read-only here, fail-closed) can mint **one-time, TTL-bounded invite PINs**.
+Sub-users self-register via the **same link**, post-completion, through a new
+**repeatable** route (not gated on `completed`, unlike the one-shot device
+wizard), entering only **invite-PIN + password + display name**.
+
+On redeem we mirror native HA onboarding: create a **Non-Admin** user
+(`GROUP_ID_USER`) **and a linked Person** (empty — no `device_trackers`, so no
+location; presence stays opt-in), auto-link the new user to the **issuing
+master** (parent map in the onboarding Store), and consume the invite. Bad
+invite attempts hit an exponential backoff; a revoked master invalidates
+pending invites.
+
+New endpoints: `POST /api/greenautarky_onboarding/sub_user/invite`
+(master-only, authenticated), `GET /greenautarky-join` (page),
+`POST /api/greenautarky_onboarding/sub_user/join` (invite-gated). Dashboard
+assignment + the scoped management ops are a later increment (see ADR-0006).
+
+Not deployed — design is privacy-review-gated before any device rollout.
+
 ## 1.0.4 — 2026-06-24
 
 ### feat(led): customer LED on/off endpoint (`GALedConfigView`)

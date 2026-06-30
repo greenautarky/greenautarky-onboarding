@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Nutzer beitreten</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      margin: 0; min-height: 100vh; display: flex; align-items: center;
+      justify-content: center; background: #f5f5f7; color: #1c1c1e;
+    }
+    @media (prefers-color-scheme: dark) {
+      body { background: #111; color: #eee; }
+      .card { background: #1c1c1e !important; box-shadow: none !important; }
+      input { background: #2c2c2e; color: #eee; border-color: #3a3a3c; }
+    }
+    .card {
+      background: #fff; border-radius: 16px; padding: 28px 26px;
+      width: 100%; max-width: 380px; box-shadow: 0 8px 30px rgba(0,0,0,.12);
+      margin: 16px;
+    }
+    h1 { font-size: 1.3rem; margin: 0 0 4px; }
+    p.sub { margin: 0 0 20px; font-size: .9rem; opacity: .7; }
+    label { display: block; font-size: .8rem; font-weight: 600; margin: 14px 0 4px; }
+    input {
+      width: 100%; box-sizing: border-box; padding: 11px 12px; font-size: 1rem;
+      border: 1px solid #d1d1d6; border-radius: 10px;
+    }
+    input#pin { letter-spacing: .15em; text-transform: uppercase; }
+    button {
+      width: 100%; margin-top: 22px; padding: 12px; font-size: 1rem; font-weight: 600;
+      color: #fff; background: #0a84ff; border: none; border-radius: 10px; cursor: pointer;
+    }
+    button:disabled { opacity: .5; cursor: default; }
+    .msg { margin-top: 16px; font-size: .88rem; padding: 10px 12px; border-radius: 10px; display: none; }
+    .msg.err { display: block; background: rgba(255,59,48,.12); color: #c0392b; }
+    .msg.ok { display: block; background: rgba(52,199,89,.14); color: #1d7a3a; }
+    code { font-size: 1rem; font-weight: 700; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Nutzer beitreten</h1>
+    <p class="sub">Erstelle dein Konto mit dem Einladungs-PIN, den du erhalten hast.</p>
+
+    <form id="join-form" autocomplete="off">
+      <label for="name">Anzeigename</label>
+      <input id="name" name="name" type="text" required autocomplete="name" />
+
+      <label for="pin">Einladungs-PIN</label>
+      <input id="pin" name="pin" type="text" inputmode="text" required autocomplete="off" />
+
+      <label for="password">Passwort (mind. 8 Zeichen)</label>
+      <input id="password" name="password" type="password" required minlength="8"
+             autocomplete="new-password" />
+
+      <label for="password2">Passwort bestätigen</label>
+      <input id="password2" name="password2" type="password" required minlength="8"
+             autocomplete="new-password" />
+
+      <button id="submit" type="submit">Konto erstellen</button>
+    </form>
+
+    <div id="msg" class="msg"></div>
+  </div>
+
+  <script>
+    (function () {
+      var form = document.getElementById("join-form");
+      var msg = document.getElementById("msg");
+      var btn = document.getElementById("submit");
+
+      function show(kind, html) {
+        msg.className = "msg " + kind;
+        msg.innerHTML = html;
+      }
+
+      form.addEventListener("submit", async function (e) {
+        e.preventDefault();
+        msg.className = "msg";
+        var name = document.getElementById("name").value.trim();
+        var pin = document.getElementById("pin").value.trim();
+        var pw = document.getElementById("password").value;
+        var pw2 = document.getElementById("password2").value;
+
+        if (pw !== pw2) { show("err", "Die Passwörter stimmen nicht überein."); return; }
+        if (pw.length < 8) { show("err", "Passwort muss mindestens 8 Zeichen haben."); return; }
+
+        btn.disabled = true;
+        try {
+          var res = await fetch("/api/greenautarky_onboarding/sub_user/join", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: name, invite_pin: pin, password: pw }),
+          });
+          var data = {};
+          try { data = await res.json(); } catch (_) {}
+
+          if (res.ok) {
+            show("ok",
+              "Konto erstellt! Dein Benutzername ist <code>" +
+              (data.username || "") +
+              "</code>. <br/><br/><a href=\"/\">Jetzt anmelden →</a>");
+            form.style.display = "none";
+            return;
+          }
+          if (res.status === 429) {
+            show("err", "Zu viele Versuche. Bitte in " +
+              (data.retry_after || "einigen") + " Sekunden erneut versuchen.");
+          } else if (res.status === 401) {
+            show("err", "PIN ungültig oder abgelaufen.");
+          } else {
+            show("err", data.message || "Konto konnte nicht erstellt werden.");
+          }
+        } catch (err) {
+          show("err", "Netzwerkfehler: " + err.message);
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

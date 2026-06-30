@@ -60,6 +60,9 @@ from .http import (
     GAPasswordResetUsersView,
     GAPasswordResetView,
     GAPinVerifyView,
+    GASubUserInviteView,
+    GASubUserJoinPageView,
+    GASubUserJoinView,
     _get_state,
     _migrate_legacy_console_secret,
     _migrate_legacy_pin,
@@ -185,6 +188,14 @@ async def _async_setup_common(hass: HomeAssistant) -> bool:
     hass.http.register_view(GAOnboardingCreateUserView())
     hass.http.register_view(GAOnboardingResetView())
     hass.http.register_view(GAPinVerifyView())
+
+    # Sub-user (household) management — ADR-0006. Registered ALWAYS (the
+    # join flow is repeatable and runs AFTER device onboarding completes,
+    # unlike the one-shot wizard views above). Invite issuing is master-only
+    # (authenticated); join + join-page are invite-PIN-gated (unauthenticated).
+    hass.http.register_view(GASubUserInviteView())
+    hass.http.register_view(GASubUserJoinPageView())
+    hass.http.register_view(GASubUserJoinView())
 
     # v1.0.0 shipped the console-login HMAC secret at `/share/ga/…` —
     # addon-readable, an exfil risk. v1.0.1+ keeps it under `/config/` and
