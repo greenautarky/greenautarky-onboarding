@@ -1854,6 +1854,7 @@ class GASubUserManageView(HomeAssistantView):
                     "user_id": uid,
                     "name": u.name,
                     "username": _username_of(u),
+                    "active": u.is_active,
                     "dashboards": matrix.get(uid, []),
                 }
             )

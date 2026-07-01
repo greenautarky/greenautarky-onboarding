@@ -164,6 +164,9 @@ async def test_list_returns_only_own_children(hass) -> None:
     assert kid.id in ids
     assert "other" not in ids
     assert "areas" in data and "dashboards" in data
+    # each sub-user carries its login-enabled state (for the card's toggle)
+    kid_row = next(s for s in data["sub_users"] if s["user_id"] == kid.id)
+    assert kid_row["active"] is True
 
 
 # --------------------------------------------------------------------------- #
