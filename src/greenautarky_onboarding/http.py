@@ -62,9 +62,6 @@ _CONSENT_HTML = (Path(__file__).parent / "consent_page.html").read_text(
 _PW_RESET_HTML = (Path(__file__).parent / "password_reset_page.html").read_text(
     encoding="utf-8"
 )
-_SUB_USER_JOIN_HTML = (Path(__file__).parent / "sub_user_join_page.html").read_text(
-    encoding="utf-8"
-)
 
 
 def _get_store(hass: HomeAssistant) -> Store[dict[str, Any]]:
@@ -1429,11 +1426,12 @@ class GASubUserInviteView(HomeAssistantView):
 
 
 class GASubUserJoinPageView(HomeAssistantView):
-    """Serve the self-contained sub-user self-registration page.
+    """Sub-user join entry — reuses the onboarding wizard in "join mode".
 
-    Same link family as device setup, but a SEPARATE, REPEATABLE route that
-    works AFTER device onboarding is complete (the one-shot wizard is gated on
-    ``completed``; this is not). Unauthenticated — the invite PIN is the gate.
+    Redirects to the built wizard page with ``?join=1`` so the panel runs the
+    minimal invite-PIN → account flow (ADR-0006) with the SAME UI + password
+    strength as device onboarding. Repeatable + works after device onboarding is
+    complete. Unauthenticated — the invite PIN is the gate.
     """
 
     url = "/greenautarky-join"
@@ -1441,8 +1439,8 @@ class GASubUserJoinPageView(HomeAssistantView):
     requires_auth = False
 
     async def get(self, request: web.Request) -> web.Response:
-        """Return the join page HTML."""
-        return web.Response(text=_SUB_USER_JOIN_HTML, content_type="text/html")
+        """Redirect to the wizard in join mode."""
+        raise web.HTTPFound("/greenautarky-setup.html?join=1")
 
 
 class GASubUserJoinView(HomeAssistantView):

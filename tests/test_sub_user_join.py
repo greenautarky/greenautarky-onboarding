@@ -161,7 +161,7 @@ async def test_invite_issued_by_master(hass) -> None:
     _seed(hass)
     master = await _make_master(hass)
     pin = await _issue_invite(hass, master)
-    assert len(pin) == 8
+    assert len(pin) == 6 and pin.isdigit()  # 6-digit numeric (reuses the wizard PIN step)
     state = hass.data[DOMAIN]["state"]
     assert len(state["sub_user_invites"]) == 1
     # plaintext PIN must NOT be stored — only its hash

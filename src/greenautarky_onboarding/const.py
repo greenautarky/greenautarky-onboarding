@@ -44,11 +44,12 @@ CONSENT_TITLES: dict[str, str] = {
 # Relative to hass.config.path() → /config/ga/ga-master-users.json
 MASTER_USERS_FILE = "ga/ga-master-users.json"
 
-# One-time, master-issued sub-user invite PINs. High-entropy, unambiguous
-# alphabet (no 0/O/1/I). Stored HASHED (sha256) in the onboarding Store with a
-# TTL; consumed on first successful join.
-INVITE_PIN_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # 32 chars
-INVITE_PIN_LENGTH = 8  # 32^8 ≈ 1.1e12 combinations
+# One-time, master-issued sub-user invite PINs. 6-digit numeric to reuse the
+# onboarding wizard's PIN step (ga-setup-pin, 000-000 format) verbatim. Stored
+# HASHED (sha256) in the onboarding Store with a TTL; consumed on first join.
+# Brute force is infeasible: one-time use + short TTL + exponential backoff.
+INVITE_PIN_ALPHABET = "0123456789"
+INVITE_PIN_LENGTH = 6
 SUB_USER_INVITE_DEFAULT_TTL_H = 24
 SUB_USER_INVITE_MAX_TTL_H = 168  # 7 days
 SUB_USER_JOIN_MAX_DELAY = 3600  # backoff cap (s) on bad join attempts
