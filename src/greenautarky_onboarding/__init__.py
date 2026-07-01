@@ -66,7 +66,9 @@ from .http import (
     GASubUserJoinPageView,
     GASubUserJoinView,
     GASubUserManageView,
+    GASubUserRemoveView,
     GASubUserRenameAreaView,
+    GASubUserSetEnabledView,
     GASubUserSetMasterView,
     _get_state,
     _migrate_legacy_console_secret,
@@ -209,6 +211,9 @@ async def _async_setup_common(hass: HomeAssistant) -> bool:
     hass.http.register_view(GASubUserManageView())
     hass.http.register_view(GASubUserAssignDashboardView())
     hass.http.register_view(GASubUserRenameAreaView())
+    # ADR-0006 lifecycle (main user manages own sub-users): remove + enable/disable.
+    hass.http.register_view(GASubUserRemoveView())
+    hass.http.register_view(GASubUserSetEnabledView())
     hass.http.register_view(GAMasterConsolePageView())
 
     # v1.0.0 shipped the console-login HMAC secret at `/share/ga/…` —

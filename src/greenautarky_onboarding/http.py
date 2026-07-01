@@ -801,11 +801,24 @@ class GAOnboardingCreateUserView(HomeAssistantView):
         )
         await hass.auth.async_link_user(user, credentials)
 
-        # Create person entity if available
-        if "person" in hass.config.components:
-            from homeassistant.components import person
+        # Create a linked Person (guaranteed fleet-wide — ADR-0006).
+        await _async_create_linked_person(hass, name, user.id)
 
-            await person.async_create_person(hass, name, user_id=user.id)
+        # ADR-0006 hybrid main-user flag: the FIRST tenant user created during
+        # device onboarding auto-becomes the main user (master) IF no main-user
+        # flag exists yet. fleet-manager can override/revoke later (it rewrites
+        # the same file). Best-effort — a failure here must not break onboarding.
+        try:
+            existing = await hass.async_add_executor_job(_read_master_user_ids, hass)
+            if not existing:
+                await hass.async_add_executor_job(
+                    _write_master_users, hass, {user.id}
+                )
+                _LOGGER.info(
+                    "onboarding: auto-flagged first tenant user %s as main user", user.id
+                )
+        except Exception as err:
+            _LOGGER.warning("onboarding: could not auto-flag main user: %s", err)
 
         # Mark account step as done
         state = _get_state(hass)
@@ -1373,6 +1386,52 @@ def _slugify_username(name: str) -> str:
     return base or "user"
 
 
+async def _async_ensure_person(hass: HomeAssistant) -> bool:
+    """Guarantee the ``person`` integration is loaded (ADR-0006 decision:
+    a join ALWAYS creates a linked Person, fleet-wide, mirroring native
+    onboarding). Some GA OS builds don't pull ``person`` via default_config,
+    so load it on demand. Returns True if ``person`` is available afterwards.
+    """
+    if "person" in hass.config.components:
+        return True
+    from homeassistant.setup import async_setup_component
+
+    try:
+        return bool(await async_setup_component(hass, "person", {}))
+    except Exception as err:  # never let this break user creation
+        _LOGGER.warning("could not load 'person' integration: %s", err)
+        return "person" in hass.config.components
+
+
+async def _async_create_linked_person(hass: HomeAssistant, name: str, user_id: str) -> None:
+    """Create an (empty) Person linked to ``user_id`` — best-effort, guaranteed
+    load first. Empty = no device_trackers → no location; presence stays opt-in."""
+    if not await _async_ensure_person(hass):
+        _LOGGER.warning("person unavailable — sub-user %s created WITHOUT a linked Person", user_id)
+        return
+    from homeassistant.components import person
+
+    await person.async_create_person(hass, name, user_id=user_id)
+
+
+async def _async_delete_linked_person(hass: HomeAssistant, user_id: str) -> None:
+    """Delete the Person linked to ``user_id`` (best-effort). Uses the person
+    storage collection at ``hass.data[person.DOMAIN][1]`` (same handle
+    ``async_create_person`` writes through)."""
+    try:
+        from homeassistant.components import person
+
+        data = hass.data.get(person.DOMAIN)
+        if not data or len(data) < 2:
+            return
+        coll = data[1]
+        for item in list(coll.async_items()):
+            if item.get("user_id") == user_id:
+                await coll.async_delete_item(item["id"])
+    except Exception as err:  # dangling person is low-risk; never fail the request
+        _LOGGER.warning("could not delete linked person for %s: %s", user_id, err)
+
+
 class GASubUserInviteView(HomeAssistantView):
     """Master-only: mint a one-time sub-user invite PIN with a TTL.
 
@@ -1569,11 +1628,9 @@ class GASubUserJoinView(HomeAssistantView):
         await hass.auth.async_link_user(user, credentials)
 
         # Mirror native onboarding: create a linked Person (empty — no
-        # device_trackers → no location; presence stays opt-in).
-        if "person" in hass.config.components:
-            from homeassistant.components import person
-
-            await person.async_create_person(hass, name, user_id=user.id)
+        # device_trackers → no location; presence stays opt-in). ADR-0006
+        # decision: guaranteed fleet-wide (load 'person' if the OS didn't).
+        await _async_create_linked_person(hass, name, user.id)
 
         # Record the parent relationship + consume the one-time invite.
         sub_users = state.get("sub_users", {})
@@ -1903,6 +1960,110 @@ class GASubUserRenameAreaView(HomeAssistantView):
             return self.json_message(str(e), status_code=400)
         _LOGGER.info("area %s renamed to %r", area_id, name)
         return self.json({"status": "ok", "area_id": area_id, "name": name})
+
+
+class GASubUserRemoveView(HomeAssistantView):
+    """Master-only: permanently remove one of the master's OWN sub-users.
+
+    ADR-0006 lifecycle decision (2026-07-01): the main user may remove + disable
+    their sub-users (scoped self-service). Deletes the Auth user, its linked
+    Person, and all matrix/parent bookkeeping, then reconciles any dashboards the
+    sub-user was assigned to. Parent relationship is enforced server-side.
+    """
+
+    url = "/api/greenautarky_onboarding/sub_user/remove"
+    name = "api:greenautarky_onboarding:sub_user_remove"
+    requires_auth = True
+
+    async def post(self, request: web.Request) -> web.Response:
+        """Delete a sub-user owned by the calling master."""
+        hass: HomeAssistant = request.app["hass"]
+        master, err = await _require_master(request)
+        if err:
+            return err
+
+        body = await request.json()
+        sub_user_id = (body.get("sub_user_id") or "").strip()
+        if not sub_user_id:
+            return self.json_message("sub_user_id is required", status_code=400)
+
+        state = _get_state(hass)
+        store = _get_store(hass)
+        if sub_user_id not in _children_of(state, master.id):
+            return web.json_response({"message": "Not your sub-user"}, status=403)
+
+        user = await hass.auth.async_get_user(sub_user_id)
+        if user is None:
+            # Already gone — clean bookkeeping and report success (idempotent).
+            (state.get("sub_users") or {}).pop(sub_user_id, None)
+            (state.get("sub_user_dashboards") or {}).pop(sub_user_id, None)
+            await store.async_save(state)
+            return self.json({"status": "ok", "removed": sub_user_id})
+
+        # Safety: never let a master delete an admin/owner via a spoofed id.
+        if user.is_owner or user.is_admin:
+            return web.json_response({"message": "Refusing to remove an admin"}, status=403)
+
+        # Dashboards this sub-user was assigned to (reconcile after removal).
+        assigned_paths = list((state.get("sub_user_dashboards") or {}).get(sub_user_id, []))
+
+        await _async_delete_linked_person(hass, sub_user_id)
+        await hass.auth.async_remove_user(user)
+
+        (state.get("sub_users") or {}).pop(sub_user_id, None)
+        (state.get("sub_user_dashboards") or {}).pop(sub_user_id, None)
+        await store.async_save(state)
+        for url_path in assigned_paths:
+            await _reconcile_dashboard_visibility(hass, url_path, state)
+
+        _LOGGER.info("master %s removed sub-user %s", master.id, sub_user_id)
+        return self.json({"status": "ok", "removed": sub_user_id})
+
+
+class GASubUserSetEnabledView(HomeAssistantView):
+    """Master-only: enable/disable login for one of the master's OWN sub-users.
+
+    ADR-0006 lifecycle: a disabled sub-user keeps their account + assignments
+    but cannot log in (``is_active=False``). Parent relationship enforced.
+    """
+
+    url = "/api/greenautarky_onboarding/sub_user/set_enabled"
+    name = "api:greenautarky_onboarding:sub_user_set_enabled"
+    requires_auth = True
+
+    async def post(self, request: web.Request) -> web.Response:
+        """Toggle a sub-user's active (login-enabled) state."""
+        hass: HomeAssistant = request.app["hass"]
+        master, err = await _require_master(request)
+        if err:
+            return err
+
+        body = await request.json()
+        sub_user_id = (body.get("sub_user_id") or "").strip()
+        if "enabled" not in body:
+            return self.json_message("enabled is required", status_code=400)
+        enabled = bool(body.get("enabled"))
+        if not sub_user_id:
+            return self.json_message("sub_user_id is required", status_code=400)
+
+        state = _get_state(hass)
+        if sub_user_id not in _children_of(state, master.id):
+            return web.json_response({"message": "Not your sub-user"}, status=403)
+
+        user = await hass.auth.async_get_user(sub_user_id)
+        if user is None:
+            return self.json_message("Unknown sub-user", status_code=404)
+        if user.is_owner or user.is_admin:
+            return web.json_response({"message": "Refusing to modify an admin"}, status=403)
+
+        await hass.auth.async_update_user(user, is_active=enabled)
+        _LOGGER.info(
+            "master %s %s sub-user %s",
+            master.id,
+            "enabled" if enabled else "disabled",
+            sub_user_id,
+        )
+        return self.json({"status": "ok", "sub_user_id": sub_user_id, "enabled": enabled})
 
 
 class GAMasterConsolePageView(HomeAssistantView):

@@ -18,17 +18,29 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from homeassistant.auth.const import GROUP_ID_USER
+from homeassistant.auth.const import GROUP_ID_ADMIN, GROUP_ID_USER
 from homeassistant.setup import async_setup_component
 
 from greenautarky_onboarding.const import DOMAIN, MASTER_USERS_FILE
 from greenautarky_onboarding.http import (
     GASubUserInviteView,
     GASubUserJoinView,
+    GASubUserRemoveView,
+    GASubUserSetEnabledView,
     _hash_invite_pin,
     _read_master_user_ids,
     _slugify_username,
 )
+
+
+async def _join(hass, master, pin, name="Bob"):
+    """Redeem an invite → return the created sub-user object."""
+    resp = await GASubUserJoinView().post(
+        _FakeRequest(hass, {"name": name, "password": "secret-pw-123", "invite_pin": pin})
+    )
+    assert resp.status == 200, _body(resp)
+    users = await hass.auth.async_get_users()
+    return next(u for u in users if u.name == name)
 
 
 class _FakeStore:
@@ -313,3 +325,122 @@ async def test_join_revoked_master_rejected(hass) -> None:
         _FakeRequest(hass, {"name": "Anna", "password": "secret-pw-123", "invite_pin": pin})
     )
     assert resp.status == 403
+
+
+# --------------------------------------------------------------------------- #
+# person guarantee (ADR-0006 decision: linked Person fleet-wide)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_join_guarantees_linked_person_without_preload(hass) -> None:
+    """Join must create a linked Person even if 'person' was NOT set up first
+    (the component loads it on demand)."""
+    assert "person" not in hass.config.components
+    _seed(hass)
+    master = await _make_master(hass)
+    pin = await _issue_invite(hass, master)
+    sub = await _join(hass, master, pin, name="Bob")
+
+    assert "person" in hass.config.components  # loaded on demand
+    persons = [s for s in hass.states.async_all() if s.entity_id.startswith("person.")]
+    assert any(s.attributes.get("user_id") == sub.id for s in persons)
+
+
+# --------------------------------------------------------------------------- #
+# lifecycle — master removes / disables own sub-users
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_remove_sub_user(hass) -> None:
+    _seed(hass)
+    master = await _make_master(hass)
+    sub = await _join(hass, master, await _issue_invite(hass, master), name="Bob")
+
+    resp = await GASubUserRemoveView().post(
+        _FakeRequest(hass, {"sub_user_id": sub.id}, hass_user=master)
+    )
+    assert resp.status == 200, _body(resp)
+    # user gone + parent map cleared + linked person removed
+    assert await hass.auth.async_get_user(sub.id) is None
+    assert sub.id not in hass.data[DOMAIN]["state"].get("sub_users", {})
+    persons = [s for s in hass.states.async_all() if s.entity_id.startswith("person.")]
+    assert not any(s.attributes.get("user_id") == sub.id for s in persons)
+
+
+@pytest.mark.asyncio
+async def test_remove_rejects_foreign_sub_user(hass) -> None:
+    """A master cannot remove a sub-user that isn't their own child."""
+    _seed(hass)
+    master = await _make_master(hass)
+    sub = await _join(hass, master, await _issue_invite(hass, master), name="Bob")
+    # A second, unrelated master.
+    other = await hass.auth.async_create_user("Other", group_ids=[GROUP_ID_USER])
+    _write_master_flag(hass, master.id, other.id)
+
+    resp = await GASubUserRemoveView().post(
+        _FakeRequest(hass, {"sub_user_id": sub.id}, hass_user=other)
+    )
+    assert resp.status == 403
+    assert await hass.auth.async_get_user(sub.id) is not None  # untouched
+
+
+@pytest.mark.asyncio
+async def test_remove_refuses_admin(hass) -> None:
+    """Refuse to delete an admin/owner even if a spoofed id lands in the map."""
+    _seed(hass)
+    master = await _make_master(hass)
+    admin = await hass.auth.async_create_user("Admin", group_ids=[GROUP_ID_ADMIN])
+    # Spoof: pretend the admin is this master's child.
+    hass.data[DOMAIN]["state"].setdefault("sub_users", {})[admin.id] = {"master": master.id}
+
+    resp = await GASubUserRemoveView().post(
+        _FakeRequest(hass, {"sub_user_id": admin.id}, hass_user=master)
+    )
+    assert resp.status == 403
+    assert await hass.auth.async_get_user(admin.id) is not None
+
+
+@pytest.mark.asyncio
+async def test_remove_requires_master(hass) -> None:
+    _seed(hass)
+    non_master = await hass.auth.async_create_user("Nobody", group_ids=[GROUP_ID_USER])
+    resp = await GASubUserRemoveView().post(
+        _FakeRequest(hass, {"sub_user_id": "x"}, hass_user=non_master)
+    )
+    assert resp.status == 403
+
+
+@pytest.mark.asyncio
+async def test_set_enabled_toggles_login(hass) -> None:
+    _seed(hass)
+    master = await _make_master(hass)
+    sub = await _join(hass, master, await _issue_invite(hass, master), name="Bob")
+
+    off = await GASubUserSetEnabledView().post(
+        _FakeRequest(hass, {"sub_user_id": sub.id, "enabled": False}, hass_user=master)
+    )
+    assert off.status == 200
+    assert (await hass.auth.async_get_user(sub.id)).is_active is False
+
+    on = await GASubUserSetEnabledView().post(
+        _FakeRequest(hass, {"sub_user_id": sub.id, "enabled": True}, hass_user=master)
+    )
+    assert on.status == 200
+    assert (await hass.auth.async_get_user(sub.id)).is_active is True
+
+
+@pytest.mark.asyncio
+async def test_set_enabled_rejects_foreign_sub_user(hass) -> None:
+    _seed(hass)
+    master = await _make_master(hass)
+    sub = await _join(hass, master, await _issue_invite(hass, master), name="Bob")
+    other = await hass.auth.async_create_user("Other", group_ids=[GROUP_ID_USER])
+    _write_master_flag(hass, master.id, other.id)
+
+    resp = await GASubUserSetEnabledView().post(
+        _FakeRequest(hass, {"sub_user_id": sub.id, "enabled": False}, hass_user=other)
+    )
+    assert resp.status == 403
+    assert (await hass.auth.async_get_user(sub.id)).is_active is True
