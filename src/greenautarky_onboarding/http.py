@@ -1329,8 +1329,18 @@ def _read_master_user_ids(hass: HomeAssistant) -> set[str]:
 
 
 def _is_master(hass: HomeAssistant, user_id: str | None) -> bool:
-    """True iff user_id is a flagged master (re-checked on every call)."""
+    """True iff user_id is a flagged master (SYNC — reads a file; use only off
+    the event loop, e.g. in tests / executor). Async handlers must use
+    ``_async_is_master`` so the flag read doesn't block the loop."""
     return bool(user_id) and user_id in _read_master_user_ids(hass)
+
+
+async def _async_is_master(hass: HomeAssistant, user_id: str | None) -> bool:
+    """Master check with the flag-file read off-loop (executor)."""
+    if not user_id:
+        return False
+    ids = await hass.async_add_executor_job(_read_master_user_ids, hass)
+    return user_id in ids
 
 
 def _hash_invite_pin(pin: str) -> str:
@@ -1382,7 +1392,7 @@ class GASubUserInviteView(HomeAssistantView):
         """Issue an invite for the authenticated master."""
         hass: HomeAssistant = request.app["hass"]
         user = request["hass_user"]
-        if not _is_master(hass, getattr(user, "id", None)):
+        if not await _async_is_master(hass, getattr(user, "id", None)):
             return web.json_response(
                 {"message": "Master privileges required"}, status=403
             )
@@ -1523,7 +1533,7 @@ class GASubUserJoinView(HomeAssistantView):
 
         # Revocation safety: the issuing master must still be authorized.
         master_user_id = match.get("master_user_id")
-        if not _is_master(hass, master_user_id):
+        if not await _async_is_master(hass, master_user_id):
             state["sub_user_invites"] = [i for i in invites if i is not match]
             await store.async_save(state)
             _LOGGER.warning(
@@ -1627,12 +1637,12 @@ def _write_master_users(hass: HomeAssistant, ids: set[str]) -> None:
         pass
 
 
-def _require_master(request: web.Request) -> tuple[Any, web.Response | None]:
+async def _require_master(request: web.Request) -> tuple[Any, web.Response | None]:
     """Return (user, None) if the authenticated caller is a master, else
-    (None, 403-response)."""
+    (None, 403-response). Flag read is off-loop."""
     hass: HomeAssistant = request.app["hass"]
     user = request["hass_user"]
-    if not _is_master(hass, getattr(user, "id", None)):
+    if not await _async_is_master(hass, getattr(user, "id", None)):
         return None, web.json_response(
             {"message": "Master privileges required"}, status=403
         )
@@ -1687,7 +1697,8 @@ async def _reconcile_dashboard_visibility(
     views = config.get("views") or []
     if assigned:
         # Assigned sub-users + all masters keep visibility; everyone else hidden.
-        visible_ids = sorted(assigned | _read_master_user_ids(hass))
+        masters = await hass.async_add_executor_job(_read_master_user_ids, hass)
+        visible_ids = sorted(assigned | masters)
         for view in views:
             view["visible"] = [{"user": uid} for uid in visible_ids]
     else:
@@ -1746,7 +1757,7 @@ class GASubUserSetMasterView(HomeAssistantView):
         if not target:
             return self.json_message("user_id is required", status_code=400)
 
-        ids = _read_master_user_ids(hass)
+        ids = await hass.async_add_executor_job(_read_master_user_ids, hass)
         if make:
             ids.add(target)
         else:
@@ -1769,7 +1780,7 @@ class GASubUserManageView(HomeAssistantView):
     async def get(self, request: web.Request) -> web.Response:
         """Return the master's manageable surface."""
         hass: HomeAssistant = request.app["hass"]
-        master, err = _require_master(request)
+        master, err = await _require_master(request)
         if err:
             return err
 
@@ -1819,7 +1830,7 @@ class GASubUserAssignDashboardView(HomeAssistantView):
     async def post(self, request: web.Request) -> web.Response:
         """Update one matrix cell + reconcile the dashboard."""
         hass: HomeAssistant = request.app["hass"]
-        master, err = _require_master(request)
+        master, err = await _require_master(request)
         if err:
             return err
 
@@ -1871,7 +1882,7 @@ class GASubUserRenameAreaView(HomeAssistantView):
     async def post(self, request: web.Request) -> web.Response:
         """Rename an area."""
         hass: HomeAssistant = request.app["hass"]
-        _master, err = _require_master(request)
+        _master, err = await _require_master(request)
         if err:
             return err
 

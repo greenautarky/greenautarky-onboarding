@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### fix(sub-user): flag read off the event loop (canary finding)
+
+Canary smoke test on K7 (real HA 2025.11.3) surfaced a blocking-call warning:
+`_read_master_user_ids` did `path.read_text()` in the event loop. Added
+`_async_is_master` + wrapped every in-loop flag read in
+`hass.async_add_executor_job`; `_require_master` is now async. The full authed
+flow (set_master → invite → join → assign_dashboard → rename_area) verified
+end-to-end on-device. **Known gap (not a code fix):** GA OS does not load the
+`person` integration, so the join's linked-Person creation is skipped (User +
+parent still correct) — pending a design decision (ship `person`, or accept
+User-only).
+
 ### feat(sub-user): master management plane — prototype (ADR-0006)
 
 Builds on the join foundation. Scoped, master-authenticated, in-process
