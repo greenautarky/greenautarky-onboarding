@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Haushalt verwalten</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      margin: 0; background: #f5f5f7; color: #1c1c1e; }
+    @media (prefers-color-scheme: dark) {
+      body { background: #111; color: #eee; }
+      .card { background: #1c1c1e !important; }
+      input, select { background: #2c2c2e; color: #eee; border-color: #3a3a3c; }
+    }
+    header { padding: 18px 20px; font-size: 1.2rem; font-weight: 700; }
+    .wrap { max-width: 760px; margin: 0 auto; padding: 0 16px 48px; }
+    .card { background: #fff; border-radius: 14px; padding: 18px 18px;
+      box-shadow: 0 4px 18px rgba(0,0,0,.08); margin-bottom: 18px; }
+    h2 { font-size: 1rem; margin: 0 0 12px; }
+    button { padding: 9px 14px; font-size: .92rem; font-weight: 600; color: #fff;
+      background: #0a84ff; border: none; border-radius: 9px; cursor: pointer; }
+    button.secondary { background: #6b7280; }
+    input, select { padding: 8px 10px; font-size: .92rem; border: 1px solid #d1d1d6;
+      border-radius: 8px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 7px 6px; border-bottom: 1px solid #e5e5ea;
+      font-size: .9rem; vertical-align: top; }
+    .sub { opacity: .6; font-size: .85rem; }
+    .pill { display:inline-block; background: rgba(10,132,255,.12); color:#0a84ff;
+      padding: 2px 8px; border-radius: 999px; font-size: .8rem; margin: 2px 4px 2px 0; }
+    .msg { padding: 10px 12px; border-radius: 9px; margin: 10px 0; font-size: .88rem; display:none; }
+    .msg.err { display:block; background: rgba(255,59,48,.12); color:#c0392b; }
+    .msg.ok  { display:block; background: rgba(52,199,89,.14); color:#1d7a3a; }
+    code { font-weight: 700; }
+    label.dash { display:block; font-weight: 400; font-size:.85rem; margin:2px 0; }
+  </style>
+</head>
+<body>
+  <header>Haushalt verwalten</header>
+  <div class="wrap">
+    <div id="msg" class="msg"></div>
+
+    <div class="card">
+      <h2>Neuen Nutzer einladen</h2>
+      <p class="sub">Erzeugt einen einmaligen Einladungs-PIN. Teile ihn mit der Person;
+        sie meldet sich unter <code>/greenautarky-join</code> an.</p>
+      <button id="invite-btn">Einladungs-PIN erzeugen</button>
+      <div id="invite-out" style="margin-top:10px"></div>
+    </div>
+
+    <div class="card">
+      <h2>Nutzer &amp; Dashboards</h2>
+      <table id="users-tbl"><tbody><tr><td class="sub">Lade…</td></tr></tbody></table>
+    </div>
+
+    <div class="card">
+      <h2>Raum umbenennen</h2>
+      <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center">
+        <select id="area-sel"></select>
+        <input id="area-name" type="text" placeholder="Neuer Name" />
+        <button id="area-btn">Umbenennen</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      var msg = document.getElementById("msg");
+      function flash(kind, text) { msg.className = "msg " + kind; msg.textContent = text;
+        setTimeout(function(){ msg.className = "msg"; }, 4000); }
+
+      function token() {
+        try { return JSON.parse(localStorage.getItem("hassTokens")).access_token; }
+        catch (e) { return null; }
+      }
+      async function api(path, opts) {
+        var t = token();
+        if (!t) { flash("err", "Nicht angemeldet — bitte zuerst in Home Assistant einloggen."); throw new Error("no token"); }
+        opts = opts || {};
+        opts.headers = Object.assign({ "Authorization": "Bearer " + t,
+          "Content-Type": "application/json" }, opts.headers || {});
+        var res = await fetch(path, opts);
+        var data = {}; try { data = await res.json(); } catch (_) {}
+        if (!res.ok) { throw new Error(data.message || ("HTTP " + res.status)); }
+        return data;
+      }
+
+      var state = { dashboards: [], areas: [], sub_users: [] };
+
+      function render() {
+        // areas
+        var sel = document.getElementById("area-sel");
+        sel.innerHTML = "";
+        state.areas.forEach(function (a) {
+          var o = document.createElement("option");
+          o.value = a.area_id; o.textContent = a.name; sel.appendChild(o);
+        });
+        // users + dashboards matrix
+        var tb = document.querySelector("#users-tbl tbody");
+        tb.innerHTML = "";
+        if (!state.sub_users.length) {
+          tb.innerHTML = '<tr><td class="sub">Noch keine Unter-Nutzer. Lade jemanden ein.</td></tr>';
+          return;
+        }
+        state.sub_users.forEach(function (u) {
+          var tr = document.createElement("tr");
+          var assigned = u.dashboards || [];
+          var checks = state.dashboards.map(function (d) {
+            var on = assigned.indexOf(d.url_path) >= 0;
+            return '<label class="dash"><input type="checkbox" data-uid="' + u.user_id +
+              '" data-url="' + d.url_path + '"' + (on ? " checked" : "") + "> " + d.title + "</label>";
+          }).join("");
+          if (!state.dashboards.length) checks = '<span class="sub">Keine Dashboards vorhanden.</span>';
+          tr.innerHTML = "<td><b>" + (u.name || "?") + "</b><br><span class='sub'>" +
+            (u.username || "") + "</span></td><td>" + checks + "</td>";
+          tb.appendChild(tr);
+        });
+        tb.querySelectorAll('input[type=checkbox]').forEach(function (cb) {
+          cb.addEventListener("change", async function () {
+            try {
+              await api("/api/greenautarky_onboarding/sub_user/assign_dashboard", {
+                method: "POST",
+                body: JSON.stringify({ sub_user_id: cb.dataset.uid,
+                  url_path: cb.dataset.url, assigned: cb.checked }),
+              });
+              flash("ok", "Dashboard-Zuweisung gespeichert.");
+            } catch (e) { cb.checked = !cb.checked; flash("err", e.message); }
+          });
+        });
+      }
+
+      async function load() {
+        try {
+          var data = await api("/api/greenautarky_onboarding/sub_user/list");
+          state = data; render();
+        } catch (e) { flash("err", e.message); }
+      }
+
+      document.getElementById("invite-btn").addEventListener("click", async function () {
+        try {
+          var d = await api("/api/greenautarky_onboarding/sub_user/invite",
+            { method: "POST", body: "{}" });
+          document.getElementById("invite-out").innerHTML =
+            'PIN: <code>' + d.pin + '</code> <span class="sub">(gültig bis ' +
+            new Date(d.expires_at).toLocaleString() + ')</span>';
+        } catch (e) { flash("err", e.message); }
+      });
+
+      document.getElementById("area-btn").addEventListener("click", async function () {
+        var area_id = document.getElementById("area-sel").value;
+        var name = document.getElementById("area-name").value.trim();
+        if (!area_id || !name) { flash("err", "Raum + neuer Name nötig."); return; }
+        try {
+          await api("/api/greenautarky_onboarding/sub_user/rename_area",
+            { method: "POST", body: JSON.stringify({ area_id: area_id, name: name }) });
+          flash("ok", "Raum umbenannt.");
+          document.getElementById("area-name").value = "";
+          load();
+        } catch (e) { flash("err", e.message); }
+      });
+
+      load();
+    })();
+  </script>
+</body>
+</html>
