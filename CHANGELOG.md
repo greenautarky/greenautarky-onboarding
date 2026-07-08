@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.0.5 — 2026-07-08
+
+### feat(build): reproducible frontend-bundle producer + #498 copy fixes
+
+The wizard's `frontend_bundle/` was a hand-captured snapshot that had drifted
+from the frontend source (the telemetry 3-tier redesign + copy fixes never
+reached devices). This release ships the bundle **committed + content-hashed**, decoupled from
+the archived frontend fork:
+
+- `frontend_bundle/` now carries a freshly built bundle + `SHA256SUMS` +
+  `BUILD-INFO.txt`. The bytes are the source of truth.
+- `scripts/build_bundle.sh --check` verifies the committed bytes against
+  `SHA256SUMS` **offline** (no fork clone/build). `--hash` recomputes the
+  manifest; `--regen` is an optional local rebuild from source.
+- `release.yml` + `ci.yml` run `--check` on a fresh checkout, so a
+  stale/frozen or tampered bundle fails the build.
+
+- **Real GreenAutarky logo**: the placeholder "GA" circle + the HA favicon (shown on every step header) are replaced by the official CI logo (inline data-URIs); user-facing wordmark is now "GreenAutarky".
+
+The rebuilt bytes include the Odoo #498 onboarding copy pass (consistent
+Siezen, real umlauts, grammar/button/link fixes, German "Fertig" instead of
+the leaked English "Next") **and** the telemetry 3-tier redesign that had been
+stranded in source. See ga-ihost-docs ADR (generic component delivery) + KB #143.
 ## Unreleased
 
 ### fix(sub-user): flag read off the event loop (canary finding)
@@ -60,7 +83,6 @@ New endpoints: `POST /api/greenautarky_onboarding/sub_user/invite`
 assignment + the scoped management ops are a later increment (see ADR-0006).
 
 Not deployed — design is privacy-review-gated before any device rollout.
-
 ## 1.0.4 — 2026-06-24
 
 ### feat(led): customer LED on/off endpoint (`GALedConfigView`)

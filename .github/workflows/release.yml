@@ -43,6 +43,11 @@ jobs:
           echo "version=$REQ" >> "$GITHUB_OUTPUT"
           echo "Publishing v$REQ"
 
+      - name: Verify the committed frontend bundle (content-hash, offline)
+        # The wizard bundle ships committed + sha256-verified — decoupled from
+        # the archived frontend fork (no clone/build in CI). See build_bundle.sh.
+        run: scripts/build_bundle.sh --check
+
       - name: Package the placement artifact
         run: |
           V="${{ steps.ver.outputs.version }}"

@@ -5,28 +5,58 @@
 1. **Phase 1 — Stock HA onboarding**: Runs automatically, creates admin account. Stock code is never modified.
 2. **Phase 2 — Custom GA onboarding** (`/greenautarky-setup`): End user creates non-admin account, GDPR, info pages, analytics. Redirects to login after completion.
 
-## Frontend version pinning
+## Frontend bundle — committed + content-hashed (fork-decoupled)
 
-The frontend version must match across **three files**:
+The wizard's `frontend_bundle/` ships **committed** and is verified by
+**content-hash** (`frontend_bundle/SHA256SUMS`). It is **decoupled from the
+frontend fork**: `greenautarky/frontend` is archived/read-only, so CI never
+clones or builds it — the committed bytes are the source of truth. Same model
+as `ga-frontend-bundle` (vendored + sha256-checked).
 
-| Location | File | Value |
+| File | Role |
+|------|------|
+| `src/greenautarky_onboarding/frontend_bundle/SHA256SUMS` | sha256 of every committed bundle payload file — the integrity manifest |
+| `src/greenautarky_onboarding/frontend_bundle/BUILD-INFO.txt` | provenance (`source_ref`, `built_at`) of the committed bytes |
+| `frontend.lock.yaml` (repo root) | records the source `repo`/`ref`/`build_cmd` for the OPTIONAL local regen only |
+| `scripts/build_bundle.sh` | `--check` (offline sha256 gate, used by CI), `--hash` (recompute SHA256SUMS), `--regen` (optional local rebuild from source + re-hash) |
+
+### To ship a panel change
+
+1. Land the change on the frontend source (a local checkout — the fork is archived).
+2. `scripts/build_bundle.sh --regen` (rebuild + re-vendor + re-hash) **or** build
+   manually, copy the `greenautarky-setup.*` artifacts into `frontend_bundle/`,
+   then `scripts/build_bundle.sh --hash`.
+3. Commit the new bytes + `SHA256SUMS`; `--check` must pass.
+4. Bump the component version (see below) and cut a release (`git tag vX.Y.Z`).
+
+CI (`ci.yml` `bundle-integrity` + `release.yml`) runs `--check` on a fresh
+checkout — a stale/frozen or tampered bundle fails the build **offline**, no
+fork access needed.
+
+## Component version pinning
+
+The component version must match across **three** places (enforced by
+`ci.yml` `build-consistency` + `release.yml` drift gate):
+
+| Location | File | Field |
 |----------|------|-------|
-| Frontend repo | `pyproject.toml` → `version` | `20251105.1` |
-| Core repo | `homeassistant/components/frontend/manifest.json` → `requirements` | `home-assistant-frontend==20251105.1` |
-| Core repo | `homeassistant/package_constraints.txt` | `home-assistant-frontend==20251105.1` |
-| Core repo | `requirements_all.txt` | `home-assistant-frontend==20251105.1` |
-| Core repo | `requirements_test_all.txt` | `home-assistant-frontend==20251105.1` |
+| this repo | `pyproject.toml` | `version` |
+| this repo | `src/greenautarky_onboarding/manifest.json` | `version` |
+| this repo | git tag | `vX.Y.Z` |
 
-**Versioning scheme:** Keep the upstream date prefix (`YYYYMMDD`), bump the patch number (`.N`) for each GA change. Example: upstream `20251105.0` → first GA change `20251105.1` → next `20251105.2`. When rebasing onto a new upstream release, start from `.0` again.
-
-**Important:** The CI workflow (`build-ga-core.yml`) builds the frontend from source (not PyPI). The version numbers just need to match — they are not used to fetch a package.
+The OS consumes it as an OCI artifact — the pin lives in
+`ha-operating-system/version.yaml` → `components.greenautarky-onboarding`.
 
 ## CI build flow
 
-1. Push to `ga/custom-onboarding` triggers `.github/workflows/build-ga-core.yml`
-2. CI clones `homeassistant_frontend` repo (same branch) and builds from source
-3. Built frontend is packaged into the HA core Docker image
-4. Image is consumed by GA OS for the iHost device
+1. Tag `vX.Y.Z` triggers `.github/workflows/release.yml`.
+2. Drift gate asserts tag == pyproject == manifest.
+3. `scripts/build_bundle.sh` (+ `--check`) rebuilds `frontend_bundle/` from the
+   pinned frontend source.
+4. The component dir is tarred and pushed as an OCI artifact to
+   `ghcr.io/greenautarky/greenautarky-onboarding:<ver>` (+ GitHub Release).
+5. GA OS pulls it at bake time (`sync-components.sh`); ga_manager places it on
+   device. See ga-ihost-docs ADR-0012 + TIER-2-COMPONENTS.md.
 
 ## Backend endpoints (this component)
 

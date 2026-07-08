@@ -1,0 +1,25 @@
+# frontend.lock.yaml — provenance for the committed wizard bundle.
+#
+# The wizard bundle ships COMMITTED in
+# src/greenautarky_onboarding/frontend_bundle/ and is verified by content-hash
+# (frontend_bundle/SHA256SUMS). It is DECOUPLED from the frontend fork:
+#
+#   * greenautarky/frontend is ARCHIVED (read-only); the fix commit below only
+#     exists in a local checkout. CI therefore never clones or builds it.
+#   * The committed bytes are the source of truth. `scripts/build_bundle.sh
+#     --check` re-verifies their sha256 offline (release CI + ci.yml).
+#
+# This block only records WHERE the committed bytes came from, for the OPTIONAL
+# local `scripts/build_bundle.sh --regen` (rebuild from source + re-hash). Regen
+# needs node + a *reachable* ref, so it only works from a local checkout that
+# has the commit.
+lock_version: 2
+
+frontend:
+  repo: https://github.com/greenautarky/frontend.git
+  # Local-only commit the committed bundle was built from (Ramin #498 copy pass
+  # + telemetry 3-tier redesign). Not reachable on the archived remote.
+  ref: "66601617d"
+  entry: greenautarky-setup
+  build_cmd: "./node_modules/.bin/gulp build-app"
+  output_root: hass_frontend
