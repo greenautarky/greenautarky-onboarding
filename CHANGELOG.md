@@ -17,6 +17,8 @@ the archived frontend fork:
 - `release.yml` + `ci.yml` run `--check` on a fresh checkout, so a
   stale/frozen or tampered bundle fails the build.
 
+- **Real GreenAutarky logo**: the placeholder "GA" circle + the HA favicon (shown on every step header) are replaced by the official CI logo (inline data-URIs); user-facing wordmark is now "GreenAutarky".
+
 The rebuilt bytes include the Odoo #498 onboarding copy pass (consistent
 Siezen, real umlauts, grammar/button/link fixes, German "Fertig" instead of
 the leaked English "Next") **and** the telemetry 3-tier redesign that had been
