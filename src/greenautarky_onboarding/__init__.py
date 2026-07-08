@@ -36,6 +36,7 @@ from homeassistant.components.frontend import add_extra_js_url
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.typing import ConfigType
 
@@ -69,6 +70,14 @@ _LOGGER = logging.getLogger(__name__)
 
 URL_BASE = "/greenautarky_onboarding_static"
 PANEL_URL_PATH = "greenautarky-setup-panel"
+
+# HA (2024.x+) quietly stops calling `async_setup` for a YAML-listed component
+# that doesn't declare a CONFIG_SCHEMA. ga_manager's converge enables this
+# integration by adding a bare `greenautarky_onboarding:` key to
+# configuration.yaml, so we must accept the empty schema for that key to load
+# via YAML — otherwise the component would only ever come up via config_flow
+# (fragile on HA 2025.11.x). Same pattern as ga_frontend_bundle.
+CONFIG_SCHEMA = cv.empty_config_schema(DOMAIN)
 
 # URL of the client-side `/` → wizard redirect JS module (Finding 20 fix).
 REDIRECT_JS_URL = "/greenautarky_onboarding_redirect.js"

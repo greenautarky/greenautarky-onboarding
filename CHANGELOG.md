@@ -6,23 +6,21 @@
 
 The wizard's `frontend_bundle/` was a hand-captured snapshot that had drifted
 from the frontend source (the telemetry 3-tier redesign + copy fixes never
-reached devices). This release makes the bundle **reproducible from a pinned
-source**:
+reached devices). This release ships the bundle **committed + content-hashed**, decoupled from
+the archived frontend fork:
 
-- `frontend.lock.yaml` pins the frontend fork repo + commit the bundle is
-  built from (the fork is a build-time input only; it is archived).
-- `scripts/build_bundle.sh` clones that pinned source, runs the frontend
-  build, and vendors the `greenautarky-setup` entry artifacts into
-  `frontend_bundle/`. `--check` asserts the committed bundle matches the pin.
-- `release.yml` runs the producer + `--check` before packaging, so a release
-  can never ship a stale bundle.
+- `frontend_bundle/` now carries a freshly built bundle + `SHA256SUMS` +
+  `BUILD-INFO.txt`. The bytes are the source of truth.
+- `scripts/build_bundle.sh --check` verifies the committed bytes against
+  `SHA256SUMS` **offline** (no fork clone/build). `--hash` recomputes the
+  manifest; `--regen` is an optional local rebuild from source.
+- `release.yml` + `ci.yml` run `--check` on a fresh checkout, so a
+  stale/frozen or tampered bundle fails the build.
 
-The pinned source includes the Odoo #498 onboarding copy pass (consistent
+The rebuilt bytes include the Odoo #498 onboarding copy pass (consistent
 Siezen, real umlauts, grammar/button/link fixes, German "Fertig" instead of
-the leaked English "Next"). See ga-ihost-docs ADR-0012 + KB #143.
-
-⚠ `frontend.lock.yaml` currently pins the frontend fix BRANCH commit — repin
-to the merged main SHA before the production release.
+the leaked English "Next") **and** the telemetry 3-tier redesign that had been
+stranded in source. See ga-ihost-docs ADR (generic component delivery) + KB #143.
 
 ## 1.0.4 — 2026-06-24
 

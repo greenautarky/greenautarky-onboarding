@@ -43,3 +43,13 @@ jobs:
           echo "pyproject: $py_ver"
           echo "manifest:  $mf_ver"
           [ "$py_ver" = "$mf_ver" ] || { echo "::error::version drift"; exit 1; }
+
+  bundle-integrity:
+    # Offline content-hash gate: the committed frontend_bundle/ bytes must
+    # match SHA256SUMS. Catches a stale/frozen or tampered bundle without
+    # cloning or building the (archived) frontend fork.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify frontend bundle content-hash
+        run: scripts/build_bundle.sh --check

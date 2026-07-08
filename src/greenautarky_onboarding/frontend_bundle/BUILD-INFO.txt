@@ -1,0 +1,5 @@
+source_repo: https://github.com/greenautarky/frontend.git
+source_ref: 6a4704e52
+entry: greenautarky-setup
+built_at: 2026-07-08T14:44:55Z
+note: fork is archived/read-only; committed bytes are the source of truth, verified by SHA256SUMS.

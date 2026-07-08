@@ -1,28 +1,25 @@
-# frontend.lock.yaml — pins the frontend SOURCE the onboarding wizard bundle
-# is built from.
+# frontend.lock.yaml — provenance for the committed wizard bundle.
 #
-# The ha-core + frontend fork is archived; it stays a *build-time input only*,
-# pinned here by exact commit so the produced bundle is reproducible. The
-# producer (scripts/build_bundle.sh) clones this repo at `ref`, runs the
-# frontend build, and vendors the `greenautarky-setup` entry artifacts into
-# src/greenautarky_onboarding/frontend_bundle/.
+# The wizard bundle ships COMMITTED in
+# src/greenautarky_onboarding/frontend_bundle/ and is verified by content-hash
+# (frontend_bundle/SHA256SUMS). It is DECOUPLED from the frontend fork:
 #
-# To ship a panel change:
-#   1. land the change on the frontend fork,
-#   2. bump `ref` below to the merged commit,
-#   3. run scripts/build_bundle.sh (or let release CI do it),
-#   4. cut a release (tag vX.Y.Z).
-lock_version: 1
+#   * greenautarky/frontend is ARCHIVED (read-only); the fix commit below only
+#     exists in a local checkout. CI therefore never clones or builds it.
+#   * The committed bytes are the source of truth. `scripts/build_bundle.sh
+#     --check` re-verifies their sha256 offline (release CI + ci.yml).
+#
+# This block only records WHERE the committed bytes came from, for the OPTIONAL
+# local `scripts/build_bundle.sh --regen` (rebuild from source + re-hash). Regen
+# needs node + a *reachable* ref, so it only works from a local checkout that
+# has the commit.
+lock_version: 2
 
 frontend:
   repo: https://github.com/greenautarky/frontend.git
-  # Commit on the frontend fork the bundle is built from.
-  # ⚠ Currently the #498 copy-fix BRANCH commit — repin to the merged main
-  #   SHA once greenautarky/frontend PR "fix/onboarding-feedback-498" lands.
+  # Local-only commit the committed bundle was built from (Ramin #498 copy pass
+  # + telemetry 3-tier redesign). Not reachable on the archived remote.
   ref: "6a4704e52"
-  # Entry name registered in build-scripts/bundle.cjs.
   entry: greenautarky-setup
-  # Full production build; emits hashed chunks into hass_frontend/frontend_*.
-  build_cmd: "yarn install --immutable && yarn build"
-  # Build output root inside the frontend checkout.
+  build_cmd: "./node_modules/.bin/gulp build-app"
   output_root: hass_frontend

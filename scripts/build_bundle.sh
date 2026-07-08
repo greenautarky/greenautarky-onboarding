@@ -1,95 +1,94 @@
 #!/usr/bin/env bash
-# build_bundle.sh — PRODUCER for the onboarding wizard frontend bundle.
+# build_bundle.sh — content-hashed producer for the onboarding wizard bundle.
 #
-# Builds the `greenautarky-setup` panel from the frontend source pinned in
-# frontend.lock.yaml and vendors the emitted artifacts into
-# src/greenautarky_onboarding/frontend_bundle/. This is the step that used to
-# be missing: the committed bundle was a hand-captured snapshot that drifted
-# from source (telemetry redesign + copy fixes never reached devices). With
-# this producer the bundle is reproducible from a pinned commit.
+# The wizard bundle ships COMMITTED in src/greenautarky_onboarding/frontend_bundle/
+# and is verified by sha256 (frontend_bundle/SHA256SUMS). It is DECOUPLED from
+# the frontend fork: the fork (greenautarky/frontend) is archived and read-only,
+# so CI never clones or builds it. The committed bytes are the source of truth;
+# CI only re-verifies their hashes offline. This mirrors ga-frontend-bundle's
+# vendored + hash-checked model.
 #
-# Usage:
-#   scripts/build_bundle.sh          # clone pinned source, build, vendor
-#   scripts/build_bundle.sh --check  # integrity gate: assert the committed
-#                                    # bundle was produced from the pinned ref
+# Modes:
+#   scripts/build_bundle.sh --check   # OFFLINE integrity gate (CI + ci.yml):
+#                                     # committed bytes must match SHA256SUMS.
+#   scripts/build_bundle.sh --hash    # recompute SHA256SUMS from the committed
+#                                     # bytes (run after a manual re-vendor).
+#   scripts/build_bundle.sh --regen   # OPTIONAL local regen: rebuild from the
+#                                     # frontend source in frontend.lock.yaml,
+#                                     # re-vendor into frontend_bundle/, re-hash.
+#                                     # Needs node + a REACHABLE ref (the fork is
+#                                     # archived, so this only works from a local
+#                                     # checkout that has the commit).
 #
-# Requires: git, node/yarn (for the real build). No yq — the flat lock file is
-# parsed with grep/sed so this runs on a minimal CI runner.
+# Default (no arg) = --check.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+BUNDLE="${REPO_ROOT}/src/greenautarky_onboarding/frontend_bundle"
+SUMS="${BUNDLE}/SHA256SUMS"
+INFO="${BUNDLE}/BUILD-INFO.txt"
 LOCK="${REPO_ROOT}/frontend.lock.yaml"
-DEST="${REPO_ROOT}/src/greenautarky_onboarding/frontend_bundle"
-INFO="${DEST}/BUILD-INFO.txt"
 
-[ -f "${LOCK}" ] || { echo "::error::${LOCK} not found" >&2; exit 2; }
+# Files that are NOT payload (excluded from the hash manifest).
+is_meta() { case "$1" in ./SHA256SUMS|./BUILD-INFO.txt) return 0;; *) return 1;; esac; }
 
-# Minimal flat-YAML value reader: `lock_val <key>` → value with any trailing
-# comment and surrounding quotes stripped. Keys are unique across the file.
-lock_val() {
-  grep -E "^[[:space:]]*$1:" "${LOCK}" | head -1 \
-    | sed -E "s/^[^:]+:[[:space:]]*//; s/[[:space:]]*#.*$//; s/^\"//; s/\"$//; s/[[:space:]]+$//"
+hash_bundle() {
+  # Deterministic, sorted list of payload files, relative to BUNDLE.
+  ( cd "${BUNDLE}"
+    find . -type f | LC_ALL=C sort | while read -r f; do
+      is_meta "$f" && continue
+      sha256sum "$f"
+    done
+  )
 }
 
-REPO="$(lock_val 'repo')"
-REF="$(lock_val 'ref')"
-ENTRY="$(lock_val 'entry')"
-BUILD_CMD="$(lock_val 'build_cmd')"
-OUTPUT_ROOT="$(lock_val 'output_root')"
+MODE="${1:---check}"
+case "${MODE}" in
+  --hash)
+    hash_bundle > "${SUMS}"
+    echo "Wrote $(grep -c . "${SUMS}") hashes to ${SUMS}"
+    ;;
 
-[ -n "${REPO}" ] && [ -n "${REF}" ] && [ -n "${ENTRY}" ] \
-  || { echo "::error::frontend.lock.yaml missing repo/ref/entry" >&2; exit 2; }
+  --check)
+    [ -f "${SUMS}" ] || { echo "::error::${SUMS} missing — run scripts/build_bundle.sh --hash" >&2; exit 1; }
+    # Verify committed bytes match the manifest, AND the manifest still covers
+    # exactly the payload set (no added/removed file slipped past the hash).
+    ( cd "${BUNDLE}" && sha256sum --check --strict --quiet SHA256SUMS ) || {
+      echo "::error::frontend_bundle bytes do not match SHA256SUMS" >&2; exit 1; }
+    if ! diff <(hash_bundle | LC_ALL=C sort) <(LC_ALL=C sort "${SUMS}") >/dev/null; then
+      echo "::error::frontend_bundle file set differs from SHA256SUMS (file added/removed)" >&2
+      exit 1
+    fi
+    echo "frontend_bundle OK — $(grep -c . "${SUMS}") files match SHA256SUMS"
+    ;;
 
-# ---- integrity check mode -------------------------------------------------
-if [ "${1:-}" = "--check" ]; then
-  if [ ! -f "${INFO}" ]; then
-    echo "::error::${INFO} missing — bundle was never produced by build_bundle.sh" >&2
-    exit 1
-  fi
-  built_ref="$(grep '^source_ref:' "${INFO}" | awk '{print $2}')"
-  if [ "${built_ref}" != "${REF}" ]; then
-    echo "::error::bundle STALE — built from '${built_ref}' but frontend.lock pins '${REF}'. Run scripts/build_bundle.sh." >&2
-    exit 1
-  fi
-  echo "bundle OK — built from ${built_ref} (matches frontend.lock)"
-  exit 0
-fi
+  --regen)
+    command -v git >/dev/null || { echo "::error::git required" >&2; exit 1; }
+    lock_val() {
+      grep -E "^[[:space:]]*$1:" "${LOCK}" | head -1 \
+        | sed -E "s/^[^:]+:[[:space:]]*//; s/[[:space:]]*#.*$//; s/^\"//; s/\"$//; s/[[:space:]]+$//"
+    }
+    REPO="$(lock_val repo)"; REF="$(lock_val ref)"; ENTRY="$(lock_val entry)"
+    BUILD_CMD="$(lock_val build_cmd)"; OUTPUT_ROOT="$(lock_val output_root)"
+    WORK="$(mktemp -d)"; trap 'rm -rf "${WORK}"' EXIT
+    echo "==> Cloning ${REPO} @ ${REF} (must be reachable locally; fork is archived)"
+    git clone --quiet --no-checkout "${REPO}" "${WORK}/frontend"
+    git -C "${WORK}/frontend" checkout --quiet "${REF}"
+    echo "==> Building (${BUILD_CMD})"
+    ( cd "${WORK}/frontend" && eval "${BUILD_CMD}" )
+    OUT="${WORK}/frontend/${OUTPUT_ROOT}"
+    [ -d "${OUT}" ] || { echo "::error::build output '${OUT}' not found" >&2; exit 1; }
+    rm -f "${BUNDLE}"/frontend_latest/"${ENTRY}".* "${BUNDLE}"/frontend_es5/"${ENTRY}".*
+    mkdir -p "${BUNDLE}/frontend_latest" "${BUNDLE}/frontend_es5"
+    cp "${OUT}/${ENTRY}.html"                   "${BUNDLE}/${ENTRY}.html"
+    cp "${OUT}"/frontend_latest/"${ENTRY}".*    "${BUNDLE}/frontend_latest/"
+    cp "${OUT}"/frontend_es5/"${ENTRY}".*        "${BUNDLE}/frontend_es5/"
+    { echo "source_repo: ${REPO}"; echo "source_ref: ${REF}"; echo "entry: ${ENTRY}"; \
+      echo "built_at: $(date -u +%FT%TZ)"; } > "${INFO}"
+    "$0" --hash
+    echo "==> Regenerated + re-hashed. Review the diff and commit."
+    ;;
 
-# ---- produce mode ---------------------------------------------------------
-command -v git >/dev/null || { echo "::error::git not on PATH" >&2; exit 1; }
-
-WORK="$(mktemp -d)"
-trap 'rm -rf "${WORK}"' EXIT
-
-echo "==> Cloning ${REPO} @ ${REF}"
-git clone --quiet --no-checkout "${REPO}" "${WORK}/frontend"
-git -C "${WORK}/frontend" checkout --quiet "${REF}"
-
-echo "==> Building (${BUILD_CMD})"
-( cd "${WORK}/frontend" && eval "${BUILD_CMD}" )
-
-OUT="${WORK}/frontend/${OUTPUT_ROOT}"
-[ -d "${OUT}" ] || { echo "::error::build output '${OUT}' not found — check output_root/build_cmd" >&2; exit 1; }
-
-# Vendor the entry's HTML + hashed JS (both build flavours). Remove stale
-# hashed files first so a new hash doesn't leave the old one behind.
-mkdir -p "${DEST}/frontend_latest" "${DEST}/frontend_es5"
-rm -f "${DEST}"/frontend_latest/"${ENTRY}".*.js "${DEST}"/frontend_es5/"${ENTRY}".*.js
-
-cp "${OUT}/${ENTRY}.html"                     "${DEST}/${ENTRY}.html"
-cp "${OUT}"/frontend_latest/"${ENTRY}".*.js   "${DEST}/frontend_latest/"
-cp "${OUT}"/frontend_es5/"${ENTRY}".*.js       "${DEST}/frontend_es5/"
-
-# ga-onboarding-redirect.js in DEST is hand-maintained (not a build artifact)
-# and is intentionally left untouched.
-
-{
-  echo "source_repo: ${REPO}"
-  echo "source_ref: ${REF}"
-  echo "entry: ${ENTRY}"
-  echo "built_at: $(date -u +%FT%TZ)"
-} > "${INFO}"
-
-echo "==> Vendored ${ENTRY} bundle into ${DEST}:"
-ls -1 "${DEST}/${ENTRY}.html" "${DEST}"/frontend_latest/"${ENTRY}".*.js "${DEST}"/frontend_es5/"${ENTRY}".*.js
-echo "==> BUILD-INFO:"; cat "${INFO}"
+  *)
+    echo "usage: $0 [--check|--hash|--regen]" >&2; exit 2;;
+esac
