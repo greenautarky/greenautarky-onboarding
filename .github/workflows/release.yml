@@ -43,6 +43,20 @@ jobs:
           echo "version=$REQ" >> "$GITHUB_OUTPUT"
           echo "Publishing v$REQ"
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Build + vendor the frontend bundle (producer)
+        # Rebuilds the wizard bundle from the frontend source pinned in
+        # frontend.lock.yaml so the packaged frontend_bundle/ is never a stale
+        # hand-captured snapshot. See scripts/build_bundle.sh + BUILD.md.
+        run: scripts/build_bundle.sh
+
+      - name: Verify bundle was built from the pinned source
+        run: scripts/build_bundle.sh --check
+
       - name: Package the placement artifact
         run: |
           V="${{ steps.ver.outputs.version }}"

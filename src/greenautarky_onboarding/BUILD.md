@@ -5,28 +5,50 @@
 1. **Phase 1 — Stock HA onboarding**: Runs automatically, creates admin account. Stock code is never modified.
 2. **Phase 2 — Custom GA onboarding** (`/greenautarky-setup`): End user creates non-admin account, GDPR, info pages, analytics. Redirects to login after completion.
 
-## Frontend version pinning
+## Frontend bundle producer (reproducible)
 
-The frontend version must match across **three files**:
+The wizard's `frontend_bundle/` is **built from a pinned frontend source**, not
+hand-edited. The frontend fork (`greenautarky/frontend`) is archived and is a
+**build-time input only** — pinned by exact commit so the bundle is
+reproducible.
 
-| Location | File | Value |
+| File | Role |
+|------|------|
+| `frontend.lock.yaml` (repo root) | pins the frontend `repo` + `ref` (commit), the `entry` name, and the `build_cmd` |
+| `scripts/build_bundle.sh` | clones the pinned source, runs the frontend build, vendors the `greenautarky-setup` artifacts into `frontend_bundle/`; `--check` = integrity gate |
+| `src/greenautarky_onboarding/frontend_bundle/BUILD-INFO.txt` | provenance the producer writes (`source_ref`, `built_at`) — `--check` compares it to the lock |
+
+### To ship a panel change
+
+1. Land the change on the frontend fork (`greenautarky/frontend`).
+2. Bump `frontend.lock.yaml` → `frontend.ref` to the merged commit.
+3. Run `scripts/build_bundle.sh` (or let release CI do it) → fresh `frontend_bundle/`.
+4. Bump the component version (see below) and cut a release (`git tag vX.Y.Z`).
+
+## Component version pinning
+
+The component version must match across **three** places (enforced by
+`ci.yml` `build-consistency` + `release.yml` drift gate):
+
+| Location | File | Field |
 |----------|------|-------|
-| Frontend repo | `pyproject.toml` → `version` | `20251105.1` |
-| Core repo | `homeassistant/components/frontend/manifest.json` → `requirements` | `home-assistant-frontend==20251105.1` |
-| Core repo | `homeassistant/package_constraints.txt` | `home-assistant-frontend==20251105.1` |
-| Core repo | `requirements_all.txt` | `home-assistant-frontend==20251105.1` |
-| Core repo | `requirements_test_all.txt` | `home-assistant-frontend==20251105.1` |
+| this repo | `pyproject.toml` | `version` |
+| this repo | `src/greenautarky_onboarding/manifest.json` | `version` |
+| this repo | git tag | `vX.Y.Z` |
 
-**Versioning scheme:** Keep the upstream date prefix (`YYYYMMDD`), bump the patch number (`.N`) for each GA change. Example: upstream `20251105.0` → first GA change `20251105.1` → next `20251105.2`. When rebasing onto a new upstream release, start from `.0` again.
-
-**Important:** The CI workflow (`build-ga-core.yml`) builds the frontend from source (not PyPI). The version numbers just need to match — they are not used to fetch a package.
+The OS consumes it as an OCI artifact — the pin lives in
+`ha-operating-system/version.yaml` → `components.greenautarky-onboarding`.
 
 ## CI build flow
 
-1. Push to `ga/custom-onboarding` triggers `.github/workflows/build-ga-core.yml`
-2. CI clones `homeassistant_frontend` repo (same branch) and builds from source
-3. Built frontend is packaged into the HA core Docker image
-4. Image is consumed by GA OS for the iHost device
+1. Tag `vX.Y.Z` triggers `.github/workflows/release.yml`.
+2. Drift gate asserts tag == pyproject == manifest.
+3. `scripts/build_bundle.sh` (+ `--check`) rebuilds `frontend_bundle/` from the
+   pinned frontend source.
+4. The component dir is tarred and pushed as an OCI artifact to
+   `ghcr.io/greenautarky/greenautarky-onboarding:<ver>` (+ GitHub Release).
+5. GA OS pulls it at bake time (`sync-components.sh`); ga_manager places it on
+   device. See ga-ihost-docs ADR-0012 + TIER-2-COMPONENTS.md.
 
 ## Backend endpoints (this component)
 

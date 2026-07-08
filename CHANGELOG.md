@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.0.5 — 2026-07-08
+
+### feat(build): reproducible frontend-bundle producer + #498 copy fixes
+
+The wizard's `frontend_bundle/` was a hand-captured snapshot that had drifted
+from the frontend source (the telemetry 3-tier redesign + copy fixes never
+reached devices). This release makes the bundle **reproducible from a pinned
+source**:
+
+- `frontend.lock.yaml` pins the frontend fork repo + commit the bundle is
+  built from (the fork is a build-time input only; it is archived).
+- `scripts/build_bundle.sh` clones that pinned source, runs the frontend
+  build, and vendors the `greenautarky-setup` entry artifacts into
+  `frontend_bundle/`. `--check` asserts the committed bundle matches the pin.
+- `release.yml` runs the producer + `--check` before packaging, so a release
+  can never ship a stale bundle.
+
+The pinned source includes the Odoo #498 onboarding copy pass (consistent
+Siezen, real umlauts, grammar/button/link fixes, German "Fertig" instead of
+the leaked English "Next"). See ga-ihost-docs ADR-0012 + KB #143.
+
+⚠ `frontend.lock.yaml` currently pins the frontend fix BRANCH commit — repin
+to the merged main SHA before the production release.
+
 ## 1.0.4 — 2026-06-24
 
 ### feat(led): customer LED on/off endpoint (`GALedConfigView`)
