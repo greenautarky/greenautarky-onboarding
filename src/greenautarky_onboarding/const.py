@@ -35,3 +35,22 @@ CONSENT_TITLES: dict[str, str] = {
     "gdpr": "Datenschutzerklärung",
     "ethernet": "Ethernet-Verbindung",
 }
+
+# ─── Sub-user (household) management — ADR-0006 ────────────────────────────
+# Master authorization flag. WRITTEN by ga_manager / ga-fleet-manager (they
+# hold `config:rw`); this component only READS it. Lives in /config (durable,
+# survives Core updates), NOT /share (writable by any addon). Plain JSON file:
+#   {"masters": [{"ha_user_id": "<uuid>"}, ...]}
+# Relative to hass.config.path() → /config/ga/ga-master-users.json
+MASTER_USERS_FILE = "ga/ga-master-users.json"
+
+# One-time, master-issued sub-user invite PINs. 6-digit numeric to reuse the
+# onboarding wizard's PIN step (ga-setup-pin, 000-000 format) verbatim. Stored
+# HASHED (sha256) in the onboarding Store with a TTL; consumed on first join.
+# Brute force is infeasible: one-time use + short TTL + exponential backoff.
+INVITE_PIN_ALPHABET = "0123456789"
+INVITE_PIN_LENGTH = 6
+SUB_USER_INVITE_DEFAULT_TTL_H = 24
+SUB_USER_INVITE_MAX_TTL_H = 168  # 7 days
+SUB_USER_JOIN_MAX_DELAY = 3600  # backoff cap (s) on bad join attempts
+SUB_USER_MIN_PASSWORD_LEN = 8

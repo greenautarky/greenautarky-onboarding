@@ -23,7 +23,66 @@ The rebuilt bytes include the Odoo #498 onboarding copy pass (consistent
 Siezen, real umlauts, grammar/button/link fixes, German "Fertig" instead of
 the leaked English "Next") **and** the telemetry 3-tier redesign that had been
 stranded in source. See ga-ihost-docs ADR (generic component delivery) + KB #143.
+## Unreleased
 
+### fix(sub-user): flag read off the event loop (canary finding)
+
+Canary smoke test on K7 (real HA 2025.11.3) surfaced a blocking-call warning:
+`_read_master_user_ids` did `path.read_text()` in the event loop. Added
+`_async_is_master` + wrapped every in-loop flag read in
+`hass.async_add_executor_job`; `_require_master` is now async. The full authed
+flow (set_master → invite → join → assign_dashboard → rename_area) verified
+end-to-end on-device. **Known gap (not a code fix):** GA OS does not load the
+`person` integration, so the join's linked-Person creation is skipped (User +
+parent still correct) — pending a design decision (ship `person`, or accept
+User-only).
+
+### feat(sub-user): master management plane — prototype (ADR-0006)
+
+Builds on the join foundation. Scoped, master-authenticated, in-process
+privileged ops (HA's Lovelace write WS is admin-only, so a Non-Admin master
+cannot do these from the browser — the component does):
+
+- `POST .../sub_user/set_master` — **admin-only** add/remove the master flag in
+  `/config/ga/ga-master-users.json` (prototype/manual provisioning; production
+  writes this via ga_manager).
+- `GET .../sub_user/list` — master-gated; returns the master's own sub-users +
+  available dashboards + areas.
+- `POST .../sub_user/assign_dashboard` — master-gated, parent-enforced; updates
+  the `[sub-user × dashboard]` matrix and reconciles native **per-view
+  `visible`** (assigned sub-users + masters visible; empty → stripped).
+- `POST .../sub_user/rename_area` — master-gated room rename via the area
+  registry.
+- `GET /greenautarky-master` — prototype Master console page (the production UI
+  is a Lovelace custom card in ga-frontend-bundle).
+
+**Entity (sensor) rename is intentionally deferred.** 9 new tests (set_master
+admin-gate, master-gated list scoped to own children, dashboard assign +
+real `visible` reconcile against a LovelaceStorage, room rename). Not deployed —
+privacy-review-gated.
+
+### feat(sub-user): household sub-user join foundation (ADR-0006)
+
+First slice of the Master-User Management Plane. A "Master-User" (a HA
+Non-Admin flagged in `/config/ga/ga-master-users.json`, written by ga_manager
+— read-only here, fail-closed) can mint **one-time, TTL-bounded invite PINs**.
+Sub-users self-register via the **same link**, post-completion, through a new
+**repeatable** route (not gated on `completed`, unlike the one-shot device
+wizard), entering only **invite-PIN + password + display name**.
+
+On redeem we mirror native HA onboarding: create a **Non-Admin** user
+(`GROUP_ID_USER`) **and a linked Person** (empty — no `device_trackers`, so no
+location; presence stays opt-in), auto-link the new user to the **issuing
+master** (parent map in the onboarding Store), and consume the invite. Bad
+invite attempts hit an exponential backoff; a revoked master invalidates
+pending invites.
+
+New endpoints: `POST /api/greenautarky_onboarding/sub_user/invite`
+(master-only, authenticated), `GET /greenautarky-join` (page),
+`POST /api/greenautarky_onboarding/sub_user/join` (invite-gated). Dashboard
+assignment + the scoped management ops are a later increment (see ADR-0006).
+
+Not deployed — design is privacy-review-gated before any device rollout.
 ## 1.0.4 — 2026-06-24
 
 ### feat(led): customer LED on/off endpoint (`GALedConfigView`)
