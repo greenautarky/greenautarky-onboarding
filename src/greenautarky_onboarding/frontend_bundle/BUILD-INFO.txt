@@ -1,5 +1,5 @@
 source_repo: https://github.com/greenautarky/frontend.git
-source_ref: 6a33f783b
+source_ref: 66601617d
 entry: greenautarky-setup
-built_at: 2026-07-08T15:12:49Z
-note: fork is archived/read-only; committed bytes are the source of truth, verified by SHA256SUMS.
+note: combined ga/sub-user-join + #498 copy-fixes (fix/onboarding-feedback-498 @6a33f783b) + real GA logo; one conflict resolved (create-user copy: joinMode structure with #498 Siezen). Local-only combined commit (fork archived); content-hash is authoritative.
+built_at: rebuilt 2026-07-08 for PR #7 (both #498 fixes AND sub-user frontend)

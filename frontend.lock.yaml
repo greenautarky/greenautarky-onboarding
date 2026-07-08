@@ -19,7 +19,7 @@ frontend:
   repo: https://github.com/greenautarky/frontend.git
   # Local-only commit the committed bundle was built from (Ramin #498 copy pass
   # + telemetry 3-tier redesign). Not reachable on the archived remote.
-  ref: "6a33f783b"
+  ref: "66601617d"
   entry: greenautarky-setup
   build_cmd: "./node_modules/.bin/gulp build-app"
   output_root: hass_frontend
