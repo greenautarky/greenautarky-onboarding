@@ -1,5 +1,5 @@
 source_repo: https://github.com/greenautarky/frontend.git
-source_ref: 66601617d
+source_ref: f22fdb47e
 entry: greenautarky-setup
-note: combined ga/sub-user-join + #498 copy-fixes (fix/onboarding-feedback-498 @6a33f783b) + real GA logo; one conflict resolved (create-user copy: joinMode structure with #498 Siezen). Local-only combined commit (fork archived); content-hash is authoritative.
-built_at: rebuilt 2026-07-08 for PR #7 (both #498 fixes AND sub-user frontend)
+note: branch ga/subuser-join-consent (1 commit on ga/onboarding-498-plus-subuser @66601617d) — required Datenschutz consent checkbox in the sub-user join step (ADR-0006 open point, best-effort, privacy-review-gated). Ref pushed to greenautarky/frontend (un-archived 2026-07-09); content-hash is authoritative.
+built_at: 2026-07-09 (gulp build-app, node v20.19.2)

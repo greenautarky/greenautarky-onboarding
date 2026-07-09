@@ -2,24 +2,27 @@
 #
 # The wizard bundle ships COMMITTED in
 # src/greenautarky_onboarding/frontend_bundle/ and is verified by content-hash
-# (frontend_bundle/SHA256SUMS). It is DECOUPLED from the frontend fork:
+# (frontend_bundle/SHA256SUMS). It is DECOUPLED from the frontend source repo:
 #
-#   * greenautarky/frontend is ARCHIVED (read-only); the fix commit below only
-#     exists in a local checkout. CI therefore never clones or builds it.
 #   * The committed bytes are the source of truth. `scripts/build_bundle.sh
-#     --check` re-verifies their sha256 offline (release CI + ci.yml).
+#     --check` re-verifies their sha256 offline (release CI + ci.yml) — CI
+#     never clones or builds the frontend.
+#   * greenautarky/frontend is writable again (un-archived 2026-07-09) and the
+#     provenance branches are pushed, so the ref below is reachable on the
+#     remote.
 #
-# This block only records WHERE the committed bytes came from, for the OPTIONAL
-# local `scripts/build_bundle.sh --regen` (rebuild from source + re-hash). Regen
-# needs node + a *reachable* ref, so it only works from a local checkout that
-# has the commit.
+# This block records WHERE the committed bytes came from, for the OPTIONAL
+# local `scripts/build_bundle.sh --regen` (rebuild from source + re-hash).
+# Regen needs node + the ref (now fetchable from the remote).
 lock_version: 2
 
 frontend:
   repo: https://github.com/greenautarky/frontend.git
-  # Local-only commit the committed bundle was built from (Ramin #498 copy pass
-  # + telemetry 3-tier redesign). Not reachable on the archived remote.
-  ref: "66601617d"
+  # Branch ga/subuser-join-consent (1 commit on ga/onboarding-498-plus-subuser
+  # @66601617d) — adds the required Datenschutz consent checkbox to the
+  # sub-user join step (ADR-0006 open point, best-effort). PUSHED to the
+  # remote (reachable ref).
+  ref: "f22fdb47e"
   entry: greenautarky-setup
   build_cmd: "./node_modules/.bin/gulp build-app"
   output_root: hass_frontend

@@ -54,3 +54,19 @@ SUB_USER_INVITE_DEFAULT_TTL_H = 24
 SUB_USER_INVITE_MAX_TTL_H = 168  # 7 days
 SUB_USER_JOIN_MAX_DELAY = 3600  # backoff cap (s) on bad join attempts
 SUB_USER_MIN_PASSWORD_LEN = 8
+
+# Sub-user data-protection consent at join (ADR-0006 open point → best-effort).
+# A sub-user is a SEPARATE data subject from the device owner, so the join must
+# capture its own Datenschutz consent (the device-level GDPR consent the owner
+# gave does not cover them). BEST-EFFORT / privacy-review-gated: we require the
+# consent at join and record who/when/what-version alongside the sub-user's
+# parent bookkeeping in the onboarding Store. The review may relocate the record
+# or bump the policy version (→ re-consent) without touching this flow.
+#
+# The consent version is standalone (not folded into CONSENT_TYPES, which tracks
+# DEVICE-level consents keyed by type in `state["consents"]`); sub-user consent
+# is PER data subject and lives under `state["sub_users"][<uid>]["consent"]`.
+SUB_USER_CONSENT_VERSION = 1
+# The privacy policy the sub-user consents to. Placeholder page stood up in
+# parallel; kept in sync with the frontend link + the device GDPR step.
+DATENSCHUTZ_URL = "https://greenautarky.com/datenschutz"
