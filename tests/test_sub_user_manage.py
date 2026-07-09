@@ -89,7 +89,7 @@ async def _join_sub_user(hass, master, name="Kid"):
     inv = await GASubUserInviteView().post(_FakeRequest(hass, {}, hass_user=master))
     pin = _body(inv)["pin"]
     resp = await GASubUserJoinView().post(
-        _FakeRequest(hass, {"name": name, "password": "secret-pw-123", "invite_pin": pin})
+        _FakeRequest(hass, {"name": name, "password": "secret-pw-123", "invite_pin": pin, "datenschutz_consent": True})
     )
     assert resp.status == 200, _body(resp)
     return next(u for u in await hass.auth.async_get_users() if u.name == name)
@@ -133,6 +133,80 @@ async def test_set_master_flags_and_unflags(hass) -> None:
     )
     assert r2.status == 200
     assert target.id not in _read_master_user_ids(hass)
+
+
+# --------------------------------------------------------------------------- #
+# master revocation → orphaned sub-users are DISABLED (ADR-0006 open point,
+# best-effort provisional policy: reversible disable, never delete)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_revoke_master_disables_its_sub_users(hass) -> None:
+    _seed(hass)
+    master = await _make_master(hass)
+    admin = await hass.auth.async_create_user("Admin", group_ids=[GROUP_ID_ADMIN])
+    sub = await _join_sub_user(hass, master, name="Kid")
+    assert sub.is_active
+
+    resp = await GASubUserSetMasterView().post(
+        _FakeRequest(hass, {"user_id": master.id, "master": False}, hass_user=admin)
+    )
+    assert resp.status == 200, _body(resp)
+    assert _body(resp)["disabled_sub_users"] == [sub.id]
+
+    # Disabled, NOT deleted: account + parent bookkeeping survive.
+    kid = await hass.auth.async_get_user(sub.id)
+    assert kid is not None
+    assert kid.is_active is False
+    assert hass.data[DOMAIN]["state"]["sub_users"][sub.id]["master"] == master.id
+
+
+@pytest.mark.asyncio
+async def test_revoke_master_leaves_other_masters_sub_users_alone(hass) -> None:
+    _seed(hass)
+    master = await _make_master(hass)
+    admin = await hass.auth.async_create_user("Admin", group_ids=[GROUP_ID_ADMIN])
+    other = await hass.auth.async_create_user("Other", group_ids=[GROUP_ID_USER])
+    _write_master_flag(hass, master.id, other.id)
+    kid_a = await _join_sub_user(hass, master, name="KidA")
+    inv = await GASubUserInviteView().post(_FakeRequest(hass, {}, hass_user=other))
+    resp = await GASubUserJoinView().post(
+        _FakeRequest(
+            hass,
+            {
+                "name": "KidB",
+                "password": "secret-pw-123",
+                "invite_pin": _body(inv)["pin"],
+                "datenschutz_consent": True,
+            },
+        )
+    )
+    assert resp.status == 200
+    kid_b = next(u for u in await hass.auth.async_get_users() if u.name == "KidB")
+
+    r = await GASubUserSetMasterView().post(
+        _FakeRequest(hass, {"user_id": master.id, "master": False}, hass_user=admin)
+    )
+    assert _body(r)["disabled_sub_users"] == [kid_a.id]
+    assert (await hass.auth.async_get_user(kid_a.id)).is_active is False
+    assert (await hass.auth.async_get_user(kid_b.id)).is_active is True
+
+
+@pytest.mark.asyncio
+async def test_unflag_non_master_disables_nothing(hass) -> None:
+    """Revoking a user that was never flagged must not touch anyone."""
+    _seed(hass)
+    master = await _make_master(hass)
+    admin = await hass.auth.async_create_user("Admin", group_ids=[GROUP_ID_ADMIN])
+    sub = await _join_sub_user(hass, master, name="Kid")
+
+    r = await GASubUserSetMasterView().post(
+        _FakeRequest(hass, {"user_id": "never-flagged-id", "master": False}, hass_user=admin)
+    )
+    assert r.status == 200
+    assert _body(r)["disabled_sub_users"] == []
+    assert (await hass.auth.async_get_user(sub.id)).is_active is True
 
 
 # --------------------------------------------------------------------------- #

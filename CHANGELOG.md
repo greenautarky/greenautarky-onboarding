@@ -23,7 +23,49 @@ The rebuilt bytes include the Odoo #498 onboarding copy pass (consistent
 Siezen, real umlauts, grammar/button/link fixes, German "Fertig" instead of
 the leaked English "Next") **and** the telemetry 3-tier redesign that had been
 stranded in source. See ga-ihost-docs ADR (generic component delivery) + KB #143.
-## Unreleased
+## 1.1.0 — 2026-07-09
+
+### feat(sub-user): Datenschutz consent at join + orphan-disable on master revocation (ADR-0006 open points, best-effort)
+
+Best-effort closure of two ADR-0006 open points, **provisional pending the
+privacy review** (implemented so the review can adjust, not so it is
+pre-empted):
+
+- **Sub-user consent capture at join.** A sub-user is a separate data subject;
+  the join previously asked only invite-PIN + password (+ display name). The
+  wizard's join mode now shows a **required Datenschutz checkbox** (link to
+  <https://greenautarky.com/datenschutz>; the consent text notes that a profile
+  without location data is created — the empty linked Person). Enforced
+  **server-side** too: `sub_user/join` rejects without `datenschutz_consent`
+  (400), so the UI is never the only gate. The consent is **recorded durably**
+  (who = the sub-user id / when / policy version / policy URL) under
+  `state["sub_users"][<uid>]["consent"]["datenschutz"]` in the onboarding Store
+  (`.storage/greenautarky_onboarding`) — alongside the parent bookkeeping, so
+  the review can audit or relocate it. `SUB_USER_CONSENT_VERSION` (const.py)
+  triggers re-consent when bumped.
+- **Orphaned sub-users on master revocation → DISABLE, never delete.**
+  Un-flagging a master via `sub_user/set_master` now sets `is_active=False` on
+  that master's sub-users (accounts, Persons and dashboard assignments are
+  kept — fully reversible; response reports `disabled_sub_users`). Provisional
+  policy: the review still owns the final fate (keep-disabled / reassign /
+  delete). **Known gap:** the production revocation path (ga-fleet-manager
+  rewriting `/config/ga/ga-master-users.json` directly) does not notify this
+  component — that path needs its own reconcile hook (follow-up for the
+  ga_manager / fleet-manager stream). Deliberately NOT wired to startup
+  flag-file reads: a transient missing/malformed file reads as "no masters"
+  (fail-closed) and must not mass-disable a household.
+- **Storage decision (best-effort):** matrix/parent/consent state **stays in
+  the onboarding Store** (`.storage/greenautarky_onboarding`); the master
+  *authorization* flag stays a plain file at `/config/ga/ga-master-users.json`
+  (per ADR-0006). Moving the Store to a `/config/ga/` plain file was assessed
+  and rejected for now: the Store is written from ~10 code paths and a plain
+  file would be writable by every `config:rw` add-on — worse for consent-record
+  integrity, not better. Documented for the privacy review to bless or move.
+
+Frontend: the wizard bundle is rebuilt from branch `ga/subuser-join-consent`
+(off `ga/onboarding-498-plus-subuser`); `frontend.lock.yaml` ref updated.
+5 new tests (consent required server-side / consent recorded / revoke disables
+own children only / no-op on never-flagged) — 51 total.
 
 ### fix(sub-user): flag read off the event loop (canary finding)
 

@@ -31,6 +31,7 @@ from homeassistant.helpers.storage import Store
 
 from .consent import async_record_consent, get_outdated_consents
 from .const import (
+    DATENSCHUTZ_URL,
     DOMAIN,
     INVITE_PIN_ALPHABET,
     INVITE_PIN_LENGTH,
@@ -38,6 +39,7 @@ from .const import (
     PIN_FILE,
     PIN_FILE_LEGACY,
     PIN_MAX_DELAY,
+    SUB_USER_CONSENT_VERSION,
     SUB_USER_INVITE_DEFAULT_TTL_H,
     SUB_USER_INVITE_MAX_TTL_H,
     SUB_USER_JOIN_MAX_DELAY,
@@ -1543,10 +1545,20 @@ class GASubUserJoinView(HomeAssistantView):
         password = body.get("password") or ""
         submitted = _normalize_invite_pin(body.get("invite_pin") or "")
         client_id = (body.get("client_id") or "").strip()
+        # Sub-user data-protection consent (ADR-0006 open point → best-effort).
+        # A sub-user is a separate data subject; the owner's device-level GDPR
+        # consent does not cover them. The wizard shows a required Datenschutz
+        # checkbox in join mode; we also enforce + record it server-side so the
+        # UI is never the only gate. Privacy-review-gated (may be extended).
+        datenschutz_consent = bool(body.get("datenschutz_consent"))
 
         if not name or not password or not submitted:
             return self.json_message(
                 "name, password and invite_pin are required", status_code=400
+            )
+        if not datenschutz_consent:
+            return self.json_message(
+                "Datenschutz consent is required", status_code=400
             )
         if len(password) < SUB_USER_MIN_PASSWORD_LEN:
             return self.json_message(
@@ -1632,11 +1644,22 @@ class GASubUserJoinView(HomeAssistantView):
         # decision: guaranteed fleet-wide (load 'person' if the OS didn't).
         await _async_create_linked_person(hass, name, user.id)
 
-        # Record the parent relationship + consume the one-time invite.
+        # Record the parent relationship + the sub-user's own consent + consume
+        # the one-time invite. The consent record (who = user.id via the key /
+        # what-version / when / which policy) is durable in the onboarding Store
+        # alongside the master bookkeeping, so the privacy review can later audit
+        # or relocate it. Bumping SUB_USER_CONSENT_VERSION triggers re-consent.
         sub_users = state.get("sub_users", {})
         sub_users[user.id] = {
             "master": master_user_id,
             "created_at": now.isoformat(),
+            "consent": {
+                "datenschutz": {
+                    "version": SUB_USER_CONSENT_VERSION,
+                    "accepted_at": now.isoformat(),
+                    "policy_url": DATENSCHUTZ_URL,
+                }
+            },
         }
         state["sub_users"] = sub_users
         state["sub_user_invites"] = [i for i in invites if i is not match]
@@ -1719,6 +1742,48 @@ def _children_of(state: dict[str, Any], master_id: str) -> dict[str, Any]:
         for uid, info in (state.get("sub_users") or {}).items()
         if (info or {}).get("master") == master_id
     }
+
+
+async def _disable_orphaned_sub_users(
+    hass: HomeAssistant, revoked_master_ids: set[str]
+) -> list[str]:
+    """DISABLE (never delete) the sub-users of masters that were just revoked.
+
+    ADR-0006 open point (best-effort, provisional): when a master flag is
+    removed, its sub-users are orphaned. We ``is_active=False`` them (they keep
+    their account, Person, and dashboard assignments — nothing is destroyed) so
+    an ex-master's household logins stop, but the privacy review can still decide
+    the final fate (keep-disabled / reassign / delete) and a re-flagged master
+    re-enables them. Deliberately conservative: disable is reversible, delete is
+    not. Returns the sub-user ids that were disabled.
+
+    NOTE: this covers the in-Core ``set_master`` revocation path (prototype /
+    manual). In PRODUCTION the flag is revoked by ga-fleet-manager rewriting
+    ``/config/ga/ga-master-users.json`` and this component is not notified — that
+    path needs its own reconcile hook (fleet-manager stream + privacy review).
+    Not wired to component startup on purpose: a transient missing/malformed flag
+    file reads as "no masters" (fail-closed) and must NOT mass-disable a whole
+    household on a bad read.
+    """
+    if not revoked_master_ids:
+        return []
+    state = _get_state(hass)
+    disabled: list[str] = []
+    for uid, info in list((state.get("sub_users") or {}).items()):
+        if (info or {}).get("master") not in revoked_master_ids:
+            continue
+        user = await hass.auth.async_get_user(uid)
+        if user is None or user.is_owner or user.is_admin or not user.is_active:
+            continue
+        await hass.auth.async_update_user(user, is_active=False)
+        disabled.append(uid)
+    if disabled:
+        _LOGGER.info(
+            "disabled %d orphaned sub-user(s) after master revocation: %s",
+            len(disabled),
+            disabled,
+        )
+    return disabled
 
 
 async def _reconcile_dashboard_visibility(
@@ -1813,13 +1878,23 @@ class GASubUserSetMasterView(HomeAssistantView):
             return self.json_message("user_id is required", status_code=400)
 
         ids = await hass.async_add_executor_job(_read_master_user_ids, hass)
+        revoked: set[str] = set()
         if make:
             ids.add(target)
         else:
+            if target in ids:
+                revoked.add(target)
             ids.discard(target)
         await hass.async_add_executor_job(_write_master_users, hass, ids)
+
+        # ADR-0006 open point (best-effort, provisional policy): revoking a
+        # master DISABLES its sub-users (reversible), never deletes them.
+        disabled = await _disable_orphaned_sub_users(hass, revoked)
+
         _LOGGER.info("master allowlist updated by admin %s: %s", user.id, sorted(ids))
-        return self.json({"status": "ok", "masters": sorted(ids)})
+        return self.json(
+            {"status": "ok", "masters": sorted(ids), "disabled_sub_users": disabled}
+        )
 
 
 class GASubUserManageView(HomeAssistantView):

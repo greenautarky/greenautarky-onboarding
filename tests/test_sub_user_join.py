@@ -36,7 +36,7 @@ from greenautarky_onboarding.http import (
 async def _join(hass, master, pin, name="Bob"):
     """Redeem an invite → return the created sub-user object."""
     resp = await GASubUserJoinView().post(
-        _FakeRequest(hass, {"name": name, "password": "secret-pw-123", "invite_pin": pin})
+        _FakeRequest(hass, {"name": name, "password": "secret-pw-123", "invite_pin": pin, "datenschutz_consent": True})
     )
     assert resp.status == 200, _body(resp)
     users = await hass.auth.async_get_users()
@@ -198,7 +198,7 @@ async def test_join_creates_non_admin_user_person_and_parent(hass) -> None:
     resp = await GASubUserJoinView().post(
         _FakeRequest(
             hass,
-            {"name": "Anna", "password": "secret-pw-123", "invite_pin": pin},
+            {"name": "Anna", "password": "secret-pw-123", "invite_pin": pin, "datenschutz_consent": True},
         )
     )
     assert resp.status == 200, _body(resp)
@@ -232,10 +232,10 @@ async def test_join_username_uniquified(hass) -> None:
     pin2 = await _issue_invite(hass, master)
 
     r1 = await GASubUserJoinView().post(
-        _FakeRequest(hass, {"name": "Sam", "password": "secret-pw-123", "invite_pin": pin1})
+        _FakeRequest(hass, {"name": "Sam", "password": "secret-pw-123", "invite_pin": pin1, "datenschutz_consent": True})
     )
     r2 = await GASubUserJoinView().post(
-        _FakeRequest(hass, {"name": "Sam", "password": "secret-pw-123", "invite_pin": pin2})
+        _FakeRequest(hass, {"name": "Sam", "password": "secret-pw-123", "invite_pin": pin2, "datenschutz_consent": True})
     )
     assert _body(r1)["username"] == "sam"
     assert _body(r2)["username"] == "sam1"
@@ -252,9 +252,66 @@ async def test_join_short_password_rejected(hass) -> None:
     master = await _make_master(hass)
     pin = await _issue_invite(hass, master)
     resp = await GASubUserJoinView().post(
-        _FakeRequest(hass, {"name": "Anna", "password": "short", "invite_pin": pin})
+        _FakeRequest(hass, {"name": "Anna", "password": "short", "invite_pin": pin, "datenschutz_consent": True})
     )
     assert resp.status == 400
+
+
+# --------------------------------------------------------------------------- #
+# Datenschutz consent at join (ADR-0006 open point, best-effort)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_join_without_consent_rejected(hass) -> None:
+    """Missing/false datenschutz_consent → 400, no user created, invite kept.
+
+    Server-side enforcement — the UI checkbox is never the only gate."""
+    _seed(hass)
+    master = await _make_master(hass)
+    pin = await _issue_invite(hass, master)
+
+    for body in (
+        {"name": "Anna", "password": "secret-pw-123", "invite_pin": pin},
+        {
+            "name": "Anna",
+            "password": "secret-pw-123",
+            "invite_pin": pin,
+            "datenschutz_consent": False,
+        },
+    ):
+        resp = await GASubUserJoinView().post(_FakeRequest(hass, body))
+        assert resp.status == 400
+        assert "consent" in _body(resp)["message"].lower()
+
+    users = await hass.auth.async_get_users()
+    assert not any(u.name == "Anna" for u in users)
+    # The invite was NOT consumed by the rejected attempts.
+    assert len(hass.data[DOMAIN]["state"]["sub_user_invites"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_join_records_consent(hass) -> None:
+    """A successful join durably records who/when/what-version of the
+    Datenschutz consent next to the parent bookkeeping (auditable, relocatable
+    by the privacy review)."""
+    from greenautarky_onboarding.const import (
+        DATENSCHUTZ_URL,
+        SUB_USER_CONSENT_VERSION,
+    )
+
+    _seed(hass)
+    master = await _make_master(hass)
+    pin = await _issue_invite(hass, master)
+    sub = await _join(hass, master, pin, name="Anna")
+
+    record = hass.data[DOMAIN]["state"]["sub_users"][sub.id]
+    consent = record["consent"]["datenschutz"]
+    assert consent["version"] == SUB_USER_CONSENT_VERSION
+    assert consent["policy_url"] == DATENSCHUTZ_URL
+    # accepted_at is a parseable UTC timestamp.
+    accepted = datetime.fromisoformat(consent["accepted_at"])
+    assert abs((datetime.now(UTC) - accepted).total_seconds()) < 60
 
 
 @pytest.mark.asyncio
@@ -263,12 +320,12 @@ async def test_join_invite_is_one_time(hass) -> None:
     master = await _make_master(hass)
     pin = await _issue_invite(hass, master)
     ok = await GASubUserJoinView().post(
-        _FakeRequest(hass, {"name": "Anna", "password": "secret-pw-123", "invite_pin": pin})
+        _FakeRequest(hass, {"name": "Anna", "password": "secret-pw-123", "invite_pin": pin, "datenschutz_consent": True})
     )
     assert ok.status == 200
     # Reusing the same PIN must fail (consumed).
     again = await GASubUserJoinView().post(
-        _FakeRequest(hass, {"name": "Other", "password": "secret-pw-123", "invite_pin": pin})
+        _FakeRequest(hass, {"name": "Other", "password": "secret-pw-123", "invite_pin": pin, "datenschutz_consent": True})
     )
     assert again.status == 401
 
@@ -291,7 +348,7 @@ async def test_join_expired_invite_rejected(hass) -> None:
     resp = await GASubUserJoinView().post(
         _FakeRequest(
             hass,
-            {"name": "Anna", "password": "secret-pw-123", "invite_pin": "ABCDEFGH"},
+            {"name": "Anna", "password": "secret-pw-123", "invite_pin": "ABCDEFGH", "datenschutz_consent": True},
         )
     )
     assert resp.status == 401
@@ -302,7 +359,7 @@ async def test_join_backoff_after_bad_attempts(hass) -> None:
     _seed(hass)
     await _make_master(hass)
     req = lambda: _FakeRequest(  # noqa: E731
-        hass, {"name": "X", "password": "secret-pw-123", "invite_pin": "WRONGPIN"}
+        hass, {"name": "X", "password": "secret-pw-123", "invite_pin": "WRONGPIN", "datenschutz_consent": True}
     )
     r1 = await GASubUserJoinView().post(req())
     assert r1.status == 401
@@ -322,7 +379,7 @@ async def test_join_revoked_master_rejected(hass) -> None:
     # Master loses its flag before the sub-user redeems.
     _write_master_flag(hass)  # empty masters list
     resp = await GASubUserJoinView().post(
-        _FakeRequest(hass, {"name": "Anna", "password": "secret-pw-123", "invite_pin": pin})
+        _FakeRequest(hass, {"name": "Anna", "password": "secret-pw-123", "invite_pin": pin, "datenschutz_consent": True})
     )
     assert resp.status == 403
 
