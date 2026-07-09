@@ -17,9 +17,11 @@ lock_version: 2
 
 frontend:
   repo: https://github.com/greenautarky/frontend.git
-  # Local-only commit the committed bundle was built from (Ramin #498 copy pass
-  # + telemetry 3-tier redesign). Not reachable on the archived remote.
-  ref: "66601617d"
+  # Local-only commit the committed bundle was built from: branch
+  # ga/subuser-join-consent (off ga/onboarding-498-plus-subuser @66601617d) —
+  # adds the required Datenschutz consent checkbox to the sub-user join step
+  # (ADR-0006 open point, best-effort). Not reachable on the archived remote.
+  ref: "f22fdb47e"
   entry: greenautarky-setup
   build_cmd: "./node_modules/.bin/gulp build-app"
   output_root: hass_frontend
