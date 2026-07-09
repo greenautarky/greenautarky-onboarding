@@ -1,0 +1,65 @@
+# produce-bundle.yml — OPTIONAL CI producer for the wizard bundle.
+#
+# Manual-only (workflow_dispatch). Runs `scripts/build_bundle.sh --regen`:
+# clones greenautarky/frontend at the ref pinned in frontend.lock.yaml
+# (the repo was un-archived 2026-07-09 and the provenance branches pushed,
+# so the ref is CI-reachable), builds the HA frontend (~15-20 min), re-vendors
+# the greenautarky-setup entry into frontend_bundle/, re-hashes, and opens a
+# PR with the new bytes. Local `--regen` stays fully supported — the committed
+# bytes + SHA256SUMS remain the source of truth either way; ci.yml `--check`
+# is still the gate that verifies them.
+name: produce-bundle
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "frontend ref to build (default: the ref pinned in frontend.lock.yaml)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  produce:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Override lock ref (optional input)
+        if: ${{ inputs.ref != '' }}
+        run: |
+          sed -i -E 's|^([[:space:]]*ref:[[:space:]]*).*$|\1"${{ inputs.ref }}"|' frontend.lock.yaml
+          grep -nE '^[[:space:]]*ref:' frontend.lock.yaml
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Produce (clone + build + re-vendor + re-hash)
+        run: scripts/build_bundle.sh --regen
+
+      - name: Verify the produced bytes
+        run: scripts/build_bundle.sh --check
+
+      - name: Open PR with the new bundle bytes
+        run: |
+          if git diff --quiet; then
+            echo "No byte changes — bundle already current for this ref."
+            exit 0
+          fi
+          BRANCH="ci/produce-$(date -u +%Y%m%d-%H%M)"
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add -A
+          git commit -m "chore(bundle): CI-produced wizard bundle ($(grep -E '^[[:space:]]*ref:' frontend.lock.yaml | head -1 | sed -E 's/.*"(.*)".*/\1/'))"
+          git push origin "$BRANCH"
+          gh pr create --base main --head "$BRANCH" \
+            --title "chore(bundle): CI-produced wizard bundle" \
+            --body "Produced by the produce-bundle workflow (\`build_bundle.sh --regen\` on the runner). Verify the SHA256SUMS diff + BUILD-INFO.txt, then merge. Reproduce locally with the same ref to cross-check the hashes."
+        env:
+          GH_TOKEN: ${{ github.token }}

@@ -2,18 +2,18 @@
 #
 # The wizard bundle ships COMMITTED in
 # src/greenautarky_onboarding/frontend_bundle/ and is verified by content-hash
-# (frontend_bundle/SHA256SUMS). It is DECOUPLED from the frontend source repo:
+# (frontend_bundle/SHA256SUMS):
 #
 #   * The committed bytes are the source of truth. `scripts/build_bundle.sh
-#     --check` re-verifies their sha256 offline (release CI + ci.yml) — CI
-#     never clones or builds the frontend.
-#   * greenautarky/frontend is writable again (un-archived 2026-07-09) and the
-#     provenance branches are pushed, so the ref below is reachable on the
-#     remote.
+#     --check` re-verifies their sha256 offline (release CI + ci.yml).
+#   * greenautarky/frontend was UN-ARCHIVED 2026-07-09 and the provenance
+#     branches pushed, so the pinned ref is reachable again: `--regen` works
+#     both locally AND via the manual `produce-bundle` workflow
+#     (workflow_dispatch), which builds on a runner and opens a PR with the
+#     new bytes. Hash verification stays the gate either way.
 #
-# This block records WHERE the committed bytes came from, for the OPTIONAL
-# local `scripts/build_bundle.sh --regen` (rebuild from source + re-hash).
-# Regen needs node + the ref (now fetchable from the remote).
+# This block records WHERE the committed bytes came from and HOW to rebuild
+# them (`scripts/build_bundle.sh --regen`).
 lock_version: 2
 
 frontend:
@@ -24,5 +24,8 @@ frontend:
   # remote (reachable ref).
   ref: "f22fdb47e"
   entry: greenautarky-setup
-  build_cmd: "./node_modules/.bin/gulp build-app"
+  # Install deps first so --regen works on a fresh clone (CI runner or a fresh
+  # local checkout). corepack pins the yarn the repo declares; idempotent when
+  # node_modules is already present.
+  build_cmd: "corepack enable && yarn install --immutable && ./node_modules/.bin/gulp build-app"
   output_root: hass_frontend

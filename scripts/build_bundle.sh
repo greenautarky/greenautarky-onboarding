@@ -3,22 +3,24 @@
 #
 # The wizard bundle ships COMMITTED in src/greenautarky_onboarding/frontend_bundle/
 # and is verified by sha256 (frontend_bundle/SHA256SUMS). It is DECOUPLED from
-# the frontend fork: the fork (greenautarky/frontend) is archived and read-only,
-# so CI never clones or builds it. The committed bytes are the source of truth;
-# CI only re-verifies their hashes offline. This mirrors ga-frontend-bundle's
-# vendored + hash-checked model.
+# the frontend build: the committed bytes are the source of truth and CI's
+# ci.yml/release.yml only re-verify their hashes offline (--check). Since
+# 2026-07-09 greenautarky/frontend is un-archived with the provenance branches
+# pushed, so --regen ALSO works in CI (manual produce-bundle workflow) — not
+# just from a local checkout. This mirrors ga-frontend-bundle's vendored +
+# hash-checked model.
 #
 # Modes:
 #   scripts/build_bundle.sh --check   # OFFLINE integrity gate (CI + ci.yml):
 #                                     # committed bytes must match SHA256SUMS.
 #   scripts/build_bundle.sh --hash    # recompute SHA256SUMS from the committed
 #                                     # bytes (run after a manual re-vendor).
-#   scripts/build_bundle.sh --regen   # OPTIONAL local regen: rebuild from the
+#   scripts/build_bundle.sh --regen   # OPTIONAL regen: rebuild from the
 #                                     # frontend source in frontend.lock.yaml,
 #                                     # re-vendor into frontend_bundle/, re-hash.
-#                                     # Needs node + a REACHABLE ref (the fork is
-#                                     # archived, so this only works from a local
-#                                     # checkout that has the commit).
+#                                     # Needs node + the pinned ref (reachable on
+#                                     # the remote since 2026-07-09; also runs in
+#                                     # CI via the produce-bundle workflow).
 #
 # Default (no arg) = --check.
 set -euo pipefail
@@ -71,7 +73,7 @@ case "${MODE}" in
     REPO="$(lock_val repo)"; REF="$(lock_val ref)"; ENTRY="$(lock_val entry)"
     BUILD_CMD="$(lock_val build_cmd)"; OUTPUT_ROOT="$(lock_val output_root)"
     WORK="$(mktemp -d)"; trap 'rm -rf "${WORK}"' EXIT
-    echo "==> Cloning ${REPO} @ ${REF} (must be reachable locally; fork is archived)"
+    echo "==> Cloning ${REPO} @ ${REF}"
     git clone --quiet --no-checkout "${REPO}" "${WORK}/frontend"
     git -C "${WORK}/frontend" checkout --quiet "${REF}"
     echo "==> Building (${BUILD_CMD})"
