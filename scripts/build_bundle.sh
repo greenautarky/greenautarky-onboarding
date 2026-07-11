@@ -88,9 +88,9 @@ case "${MODE}" in
     rm -rf "${BUNDLE}/frontend_latest" "${BUNDLE}/frontend_es5"
     mkdir -p "${BUNDLE}/frontend_latest" "${BUNDLE}/frontend_es5"
     cp "${OUT}/${ENTRY}.html"                   "${BUNDLE}/${ENTRY}.html"
-    find "${OUT}/frontend_latest" -maxdepth 1 -type f \( -name "*.js" -o -name "*.txt" -o -name "*.map" \) \
+    find "${OUT}/frontend_latest" -maxdepth 1 -type f \( -name "*.js" -o -name "*.txt" \) \
       -exec cp {} "${BUNDLE}/frontend_latest/" \;
-    find "${OUT}/frontend_es5" -maxdepth 1 -type f \( -name "*.js" -o -name "*.txt" -o -name "*.map" \) \
+    find "${OUT}/frontend_es5" -maxdepth 1 -type f \( -name "*.js" -o -name "*.txt" \) \
       -exec cp {} "${BUNDLE}/frontend_es5/" \;
     { echo "source_repo: ${REPO}"; echo "source_ref: ${REF}"; echo "entry: ${ENTRY}"; \
       echo "built_at: $(date -u +%FT%TZ)"; } > "${INFO}"
