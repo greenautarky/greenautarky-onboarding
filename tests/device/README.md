@@ -15,6 +15,8 @@ Environment (both tiers):
 ```bash
 export GA_DEVICE_URL=http://<device-ip>:8123     # NetBird/Tailscale mesh IP
 export GA_DEVICE_MASTER_USERNAME=<master login>  # a flagged master, NOT admin
+                                                 # (the PROVIDER username, e.g.
+                                                 #  test@greenautarky.local — not the display name)
 export GA_DEVICE_MASTER_PASSWORD=<password>
 ```
 
@@ -29,3 +31,9 @@ Conventions:
   runners cannot reach devices; CI wiring is the manual
   `device-tests` workflow with a self-hosted/mesh runner, or run locally
   as part of the canary roll checklist.
+
+Known state (2026-07-11): the **device tier is green** against rc24/K0.
+The **e2e tier fails deliberately** at its "#512 regression gate" — the
+join wizard's ha-form account fields never render because the frontend
+bundle's dynamic `/frontend_latest/*.js` chunk imports 404 on stock Core
+(Odoo #512). It goes green once the bundle is rebuilt self-contained.
