@@ -27,7 +27,7 @@ frontend:
 # every dynamic import via LimitChunkCountPlugin), because the vendored
 # bundle only ships greenautarky-setup.* and code-split chunks 404 on a
 # stock Core (/frontend_latest belongs to the ha-frontend PyPI package).
-  ref: "f435cb926"
+  ref: "a3df753a7"
   entry: greenautarky-setup
   # Install deps first so --regen works on a fresh clone (CI runner or a fresh
   # local checkout). corepack pins the yarn the repo declares; idempotent when
