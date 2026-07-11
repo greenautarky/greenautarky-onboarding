@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.2.1 — 2026-07-11
+
+### fix(bundle): join/setup wizard UI repaired — dedicated compilation on the component mount (#512)
+
+The vendored wizard bundle only shipped the entry chunk; every code-split
+`import()` (ha-form field renderers etc.) requested `/frontend_latest/…`
+from the STOCK Core and 404'd — the account-creation step rendered no
+name/password fields, so a customer with an invite PIN could not join via
+the browser (caught by the new Playwright e2e tier's #512 regression gate).
+
+- Frontend fork `2d0609e2e`: new `gulp build-ga-wizard` — a DEDICATED
+  compilation for the wizard entry whose publicPath is the component's own
+  static mount (`/greenautarky_onboarding_static/frontend_{latest,es5}/`).
+  Its output dirs contain exactly the wizard's chunk set.
+- `build_bundle.sh --regen` vendors the whole compilation dirs (complete by
+  construction; no source maps — dev-only, ~20 MB) and the component serves
+  them as directory statics on its mount. No collision with the stock
+  Core's `/frontend_latest` is possible anymore.
+- Legacy per-file registrations kept so a pre-#512 HTML keeps working
+  during the transition.
+- Bundle produced by the produce-bundle CI workflow (runner-built, not
+  locally). A single-chunk variant was tried first and OOM-killed 7–16 GB
+  hosts; the dedicated-compilation approach keeps the app build's proven
+  memory profile.
+
 ## 1.2.0 — 2026-07-11
 
 ### feat(sub-user): personal dashboards — auto-created per user (ADR-0006 matrix)
