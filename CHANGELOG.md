@@ -1,5 +1,36 @@
 # Changelog
 
+## 1.2.0 — 2026-07-11
+
+### feat(sub-user): personal dashboards — auto-created per user (ADR-0006 matrix)
+
+Every tenant user now gets a personal storage dashboard, automatically:
+
+- **create_user (onboarding account step)**: the auto-elected master gets
+  `ga-home-<name>` seeded with a welcome view, assigned in the
+  `sub_user_dashboards` matrix, per-view `visible` reconciled.
+- **sub_user/join**: every joining sub-user gets the same treatment —
+  visible to them + the masters only.
+- **Boot**: component-owned dashboards are re-registered on
+  EVENT_HOMEASSISTANT_STARTED (runtime panels don't survive restarts), and
+  masters/sub-users that predate this feature are **backfilled**
+  (self-healing; skips admins/inactive users; no-op without masters).
+- Dashboards are component-owned (LovelaceStorage + panel registered by us,
+  like lovelace treats YAML dashboards) because the running
+  `DashboardsCollection` is unreachable from a custom component and a second
+  collection instance would clobber user-created dashboards. Trade-off:
+  they don't appear in Settings → Dashboards; managed via the master console.
+- Best-effort everywhere: dashboard failures never break user creation.
+
+### test: device + e2e tiers
+
+- `tests/device` (`-m device`): invite → join → auto-dashboard → panel
+  serves, against a REAL canary via the HA HTTP API (env-gated, self-cleaning).
+- `tests/e2e` (`-m e2e`): the same use-case driven through a real browser
+  (Playwright) — master console → join page → sub-user sees their board.
+- CI runs `-m 'not device and not e2e'`; manual `device-tests` workflow for
+  a mesh-attached self-hosted runner. See `tests/device/README.md`.
+
 ## 1.0.5 — 2026-07-08
 
 ### feat(build): reproducible frontend-bundle producer + #498 copy fixes

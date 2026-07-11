@@ -29,6 +29,7 @@ from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 
+from . import dashboards
 from .consent import async_record_consent, get_outdated_consents
 from .const import (
     DATENSCHUTZ_URL,
@@ -827,7 +828,16 @@ class GAOnboardingCreateUserView(HomeAssistantView):
         store = _get_store(hass)
         if "account" not in state.get("steps_done", []):
             state.setdefault("steps_done", []).append("account")
-            await store.async_save(state)
+
+        # ADR-0006 matrix: every tenant user gets a personal dashboard,
+        # assigned to them in the matrix. Best-effort (never raises); the
+        # reconcile turns the assignment into native per-view visibility.
+        personal_path = await dashboards.async_create_personal_dashboard(
+            hass, state, user.id, name
+        )
+        await store.async_save(state)
+        if personal_path:
+            await _reconcile_dashboard_visibility(hass, personal_path, state)
 
         # Return auth_code so frontend can authenticate
         from homeassistant.components.auth import create_auth_code
@@ -1665,7 +1675,16 @@ class GASubUserJoinView(HomeAssistantView):
         state["sub_user_invites"] = [i for i in invites if i is not match]
         state["sub_user_join_attempts"] = 0
         state["sub_user_join_locked_until"] = None
+
+        # ADR-0006 matrix: the new sub-user gets a personal dashboard,
+        # assigned in the matrix (visible to them + all masters only after
+        # the reconcile). Best-effort — never blocks the join.
+        personal_path = await dashboards.async_create_personal_dashboard(
+            hass, state, user.id, name
+        )
         await store.async_save(state)
+        if personal_path:
+            await _reconcile_dashboard_visibility(hass, personal_path, state)
 
         _LOGGER.info(
             "sub-user '%s' (user %s) joined under master %s",
@@ -2158,3 +2177,50 @@ class GAMasterConsolePageView(HomeAssistantView):
     async def get(self, request: web.Request) -> web.Response:
         """Return the master console HTML."""
         return web.Response(text=_MASTER_CONSOLE_HTML, content_type="text/html")
+
+
+# ---------------------------------------------------------------------------
+# Personal dashboards — boot re-registration + backfill (ADR-0006 matrix)
+# ---------------------------------------------------------------------------
+
+
+async def async_boot_register_personal_dashboards(hass: HomeAssistant) -> None:
+    """Re-register personal dashboards on boot + backfill missing ones.
+
+    Runs on EVENT_HOMEASSISTANT_STARTED (lovelace + auth are up by then).
+
+    1. Re-register: storage panels registered at runtime do not survive a
+       restart, and lovelace only re-registers its own collection — our
+       component-owned dashboards must be re-added from the state store.
+    2. Backfill (self-healing, ADR-0006): masters + sub-users that predate
+       this feature (or whose creation-time attempt failed) get their
+       personal dashboard now. No-op on devices without masters/sub-users.
+
+    Best-effort throughout — must never break component setup.
+    """
+    state = _get_state(hass)
+    await dashboards.async_register_all(hass, state)
+
+    known = dashboards.personal_dashboards(state)
+    candidate_ids: set[str] = set()
+    try:
+        candidate_ids |= await hass.async_add_executor_job(
+            _read_master_user_ids, hass
+        )
+    except Exception as err:
+        _LOGGER.debug("personal-dashboard backfill: master read failed: %s", err)
+    candidate_ids |= set((state.get("sub_users") or {}).keys())
+
+    changed = False
+    for user_id in sorted(candidate_ids - set(known)):
+        user = await hass.auth.async_get_user(user_id)
+        if user is None or not user.is_active or user.is_admin or user.system_generated:
+            continue
+        url_path = await dashboards.async_create_personal_dashboard(
+            hass, state, user_id, user.name or "Zuhause"
+        )
+        if url_path:
+            changed = True
+            await _reconcile_dashboard_visibility(hass, url_path, state)
+    if changed:
+        await _get_store(hass).async_save(state)

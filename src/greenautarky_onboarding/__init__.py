@@ -35,7 +35,8 @@ from homeassistant.components import frontend, panel_custom
 from homeassistant.components.frontend import add_extra_js_url
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
+from homeassistant.core import CoreState, Event, HomeAssistant
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.typing import ConfigType
@@ -74,6 +75,7 @@ from .http import (
     _get_state,
     _migrate_legacy_console_secret,
     _migrate_legacy_pin,
+    async_boot_register_personal_dashboards,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -288,6 +290,19 @@ async def _async_setup_common(hass: HomeAssistant) -> bool:
         # authenticated dashboard HTML (never into /onboarding.html nor
         # /auth/authorize) — confirmed in HA Core 2025.11.x source.
         _patch_index_view_for_wizard_redirect(hass)
+
+    # Personal dashboards (ADR-0006 matrix): re-register component-owned
+    # dashboards + backfill masters/sub-users that predate the feature.
+    # Deferred to EVENT_HOMEASSISTANT_STARTED so lovelace + auth are up.
+    async def _personal_dashboards_started(_event: Event | None = None) -> None:
+        await async_boot_register_personal_dashboards(hass)
+
+    if hass.state is CoreState.running:
+        hass.async_create_task(_personal_dashboards_started())
+    else:
+        hass.bus.async_listen_once(
+            EVENT_HOMEASSISTANT_STARTED, _personal_dashboards_started
+        )
 
     # Check for outdated consents and create repair issues if needed.
     # Only for devices with a REAL stored onboarding state — an old device

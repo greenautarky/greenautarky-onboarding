@@ -1,0 +1,55 @@
+# Device + E2E test tiers — MANUAL dispatch against a canary.
+#
+# GitHub-hosted runners cannot reach the device mesh, so this workflow
+# only runs on a self-hosted runner with mesh access (label `mesh`).
+# Without one, run the same commands from the laptop / remote1 — see
+# tests/device/README.md. Kept in CI so the release checklist has a
+# single button once a mesh runner exists.
+name: Device tests (canary)
+
+on:
+  workflow_dispatch:
+    inputs:
+      device_url:
+        description: "Device base URL (e.g. http://100.126.128.133:8123) — CANARY ONLY"
+        required: true
+      tier:
+        description: "Which tier to run"
+        type: choice
+        options: [device, e2e, both]
+        default: device
+
+jobs:
+  device:
+    if: ${{ inputs.tier == 'device' || inputs.tier == 'both' }}
+    runs-on: [self-hosted, mesh]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: pip install -e .[dev] aiohttp
+      - name: Device tier
+        env:
+          GA_DEVICE_URL: ${{ inputs.device_url }}
+          GA_DEVICE_MASTER_USERNAME: ${{ secrets.GA_CANARY_MASTER_USERNAME }}
+          GA_DEVICE_MASTER_PASSWORD: ${{ secrets.GA_CANARY_MASTER_PASSWORD }}
+        run: pytest tests/device -m device -v -o addopts=""
+
+  e2e:
+    if: ${{ inputs.tier == 'e2e' || inputs.tier == 'both' }}
+    runs-on: [self-hosted, mesh]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: |
+          pip install -e .[dev] playwright
+          playwright install chromium --with-deps
+      - name: E2E tier (Playwright)
+        env:
+          GA_DEVICE_URL: ${{ inputs.device_url }}
+          GA_DEVICE_MASTER_USERNAME: ${{ secrets.GA_CANARY_MASTER_USERNAME }}
+          GA_DEVICE_MASTER_PASSWORD: ${{ secrets.GA_CANARY_MASTER_PASSWORD }}
+        run: pytest tests/e2e -m e2e -v -o addopts=""
