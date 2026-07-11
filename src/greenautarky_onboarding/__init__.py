@@ -397,11 +397,18 @@ def _scan_frontend_bundle() -> list[StaticPathConfig] | None:
             True,
         ),
     ]
-    # Hashed JS bundles — register each file individually under the upstream URLs.
+    # Hashed JS bundles. Since #512 the wizard is a dedicated compilation
+    # whose publicPath is the component's own static mount — serve the whole
+    # dirs there (directory registration). The legacy per-file registrations
+    # under the stock /frontend_latest|es5 URLs stay for the entry files so a
+    # not-yet-regenerated (pre-#512) HTML keeps working during the transition.
     for sub in ("frontend_latest", "frontend_es5"):
         sub_dir = bundle_dir / sub
         if not sub_dir.exists():
             continue
+        configs.append(
+            StaticPathConfig(f"{URL_BASE}/{sub}", str(sub_dir), True)
+        )
         for file in sub_dir.iterdir():
             if file.is_file() and file.name.startswith("greenautarky-setup"):
                 configs.append(

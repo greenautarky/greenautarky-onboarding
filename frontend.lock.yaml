@@ -23,11 +23,11 @@ frontend:
   # sub-user join step (ADR-0006 open point, best-effort). PUSHED to the
   # remote (reachable ref).
   # Branch ga/wizard-selfcontained-512 (1 commit on f22fdb47e) — #512: the
-# wizard entry now builds SELF-CONTAINED (gulp build-ga-wizard inlines
-# every dynamic import via LimitChunkCountPlugin), because the vendored
+# wizard entry now builds as a DEDICATED compilation (gulp build-ga-wizard)
+# on the component's own publicPath, because the vendored
 # bundle only ships greenautarky-setup.* and code-split chunks 404 on a
 # stock Core (/frontend_latest belongs to the ha-frontend PyPI package).
-  ref: "a3df753a7"
+  ref: "2d0609e2e"
   entry: greenautarky-setup
   # Install deps first so --regen works on a fresh clone (CI runner or a fresh
   # local checkout). corepack pins the yarn the repo declares; idempotent when
