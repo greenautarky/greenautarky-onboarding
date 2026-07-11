@@ -22,10 +22,15 @@ frontend:
   # @66601617d) — adds the required Datenschutz consent checkbox to the
   # sub-user join step (ADR-0006 open point, best-effort). PUSHED to the
   # remote (reachable ref).
-  ref: "f22fdb47e"
+  # Branch ga/wizard-selfcontained-512 (1 commit on f22fdb47e) — #512: the
+# wizard entry now builds SELF-CONTAINED (gulp build-ga-wizard inlines
+# every dynamic import via LimitChunkCountPlugin), because the vendored
+# bundle only ships greenautarky-setup.* and code-split chunks 404 on a
+# stock Core (/frontend_latest belongs to the ha-frontend PyPI package).
+  ref: "f435cb926"
   entry: greenautarky-setup
   # Install deps first so --regen works on a fresh clone (CI runner or a fresh
   # local checkout). corepack pins the yarn the repo declares; idempotent when
   # node_modules is already present.
-  build_cmd: "corepack enable && yarn install --immutable && ./node_modules/.bin/gulp build-app"
+  build_cmd: "corepack enable && yarn install --immutable && ./node_modules/.bin/gulp build-ga-wizard"
   output_root: hass_frontend
