@@ -1,5 +1,4 @@
 source_repo: https://github.com/greenautarky/frontend.git
-source_ref: f22fdb47e
+source_ref: 2d0609e2e
 entry: greenautarky-setup
-note: branch ga/subuser-join-consent (1 commit on ga/onboarding-498-plus-subuser @66601617d) — required Datenschutz consent checkbox in the sub-user join step (ADR-0006 open point, best-effort, privacy-review-gated). Ref pushed to greenautarky/frontend (un-archived 2026-07-09); content-hash is authoritative.
-built_at: 2026-07-09 (gulp build-app, node v20.19.2)
+built_at: 2026-07-11T19:28:57Z
