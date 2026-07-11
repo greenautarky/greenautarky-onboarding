@@ -140,9 +140,12 @@ async def test_invite_join_and_personal_dashboard(socket_enabled) -> None:
                     "for customers on this bundle."
                 )
 
-            pw_field = page.locator('input[type="password"]').first
             await name_field.fill(sub_name)
-            await pw_field.fill(sub_password)
+            # two password inputs: Passwort + Passwort bestätigen — both
+            # must be filled or "Konto erstellen" stays disabled
+            pw_fields = page.locator('input[type="password"]')
+            await pw_fields.nth(0).fill(sub_password)
+            await pw_fields.nth(1).fill(sub_password)
             await page.get_by_role("button", name="Konto erstellen").click()
             await page.wait_for_load_state("networkidle")
 
