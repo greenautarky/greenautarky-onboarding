@@ -29,7 +29,7 @@ from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 
-from . import dashboards
+from . import dashboards, rooms
 from .consent import async_record_consent, get_outdated_consents
 from .const import (
     DATENSCHUTZ_URL,
@@ -1936,6 +1936,7 @@ class GASubUserManageView(HomeAssistantView):
         state = _get_state(hass)
         children = _children_of(state, master.id)
         matrix = state.get("sub_user_dashboards") or {}
+        room_matrix = state.get(rooms.STATE_ROOMS) or {}
 
         users_by_id = {u.id: u for u in await hass.auth.async_get_users()}
         sub_users = []
@@ -1949,6 +1950,9 @@ class GASubUserManageView(HomeAssistantView):
                     "name": u.name,
                     "username": _username_of(u),
                     "active": u.is_active,
+                    # `rooms` drives the generated dashboard. `dashboards` is the
+                    # legacy matrix, kept until the last per-user board is gone.
+                    "rooms": room_matrix.get(uid, []),
                     "dashboards": matrix.get(uid, []),
                 }
             )
@@ -2110,6 +2114,9 @@ class GASubUserRemoveView(HomeAssistantView):
 
         (state.get("sub_users") or {}).pop(sub_user_id, None)
         (state.get("sub_user_dashboards") or {}).pop(sub_user_id, None)
+        # Room grants die with the user — otherwise a future user that happens to
+        # reuse this id would inherit his rooms.
+        (state.get(rooms.STATE_ROOMS) or {}).pop(sub_user_id, None)
         # The personal dashboard must DIE with the user — an orphaned board
         # plus the visible-strip below made it public to everyone (KB #149 §5a).
         removed_board = await dashboards.async_delete_personal_dashboard(
