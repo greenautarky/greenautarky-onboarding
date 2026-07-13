@@ -314,3 +314,32 @@ async def test_boot_backfill_skips_admin_and_inactive(hass) -> None:
     await async_boot_register_personal_dashboards(hass)
 
     assert state.get("personal_dashboards", {}) == {}
+
+
+# --- wiring: sub-user removal deletes the personal dashboard ---------------
+
+
+async def test_remove_deletes_personal_dashboard(hass) -> None:
+    """KB #149 §5a: the orphaned board survived removal and the visible-strip
+    made it PUBLIC. Removal must delete panel + config + bookkeeping."""
+    from greenautarky_onboarding.http import GASubUserRemoveView
+
+    _store, state = _seed(hass)
+    _inject_lovelace(hass)
+    master = await _make_master(hass)
+    resp = await _join_sub_user(hass, master, "Otto")
+    assert resp.status == 200, _body(resp)
+    users = await hass.auth.async_get_users()
+    otto = next(u for u in users if u.name == "Otto")
+    url = state["personal_dashboards"][otto.id]
+    assert url in hass.data[frontend.DATA_PANELS]
+
+    resp = await GASubUserRemoveView().post(
+        _FakeRequest(hass, {"sub_user_id": otto.id}, hass_user=master)
+    )
+    assert resp.status == 200, _body(resp)
+    # every trace gone: bookkeeping, panel, lovelace data
+    assert otto.id not in state.get("personal_dashboards", {})
+    assert otto.id not in state.get("sub_user_dashboards", {})
+    assert url not in hass.data[frontend.DATA_PANELS]
+    assert url not in hass.data[LOVELACE_DATA].dashboards

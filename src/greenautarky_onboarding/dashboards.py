@@ -188,3 +188,36 @@ async def async_register_all(hass: HomeAssistant, state: dict[str, Any]) -> None
                 user_id,
                 err,
             )
+
+
+async def async_delete_personal_dashboard(
+    hass: HomeAssistant, state: dict[str, Any], user_id: str
+) -> str | None:
+    """Delete ``user_id``'s personal dashboard entirely (panel + config +
+    bookkeeping). Used by sub-user removal: without this the orphaned board
+    survived AND the matrix reconcile stripped its per-view ``visible`` —
+    making the removed user's private board visible to EVERYONE (KB #149
+    §5a). Best-effort; returns the deleted url_path or None."""
+    url_path = personal_dashboards(state).pop(user_id, None)
+    if not url_path:
+        return None
+    (state.get("sub_user_dashboards") or {}).pop(user_id, None)
+    try:
+        if url_path in (hass.data.get(frontend.DATA_PANELS) or {}):
+            frontend.async_remove_panel(hass, url_path)
+        from homeassistant.components.lovelace.const import LOVELACE_DATA
+
+        lovelace_data = hass.data.get(LOVELACE_DATA)
+        if lovelace_data is not None:
+            dash = lovelace_data.dashboards.pop(url_path, None)
+            if dash is not None and hasattr(dash, "async_delete"):
+                await dash.async_delete()
+    except Exception as err:  # removal must not fail on cleanup
+        _LOGGER.warning(
+            "personal dashboard %s (user %s) cleanup incomplete: %s",
+            url_path,
+            user_id,
+            err,
+        )
+    _LOGGER.info("deleted personal dashboard %s of removed user %s", url_path, user_id)
+    return url_path
