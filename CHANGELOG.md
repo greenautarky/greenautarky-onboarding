@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.2.2 — 2026-07-13
+
+### fix(sub-user): removal deletes the personal dashboard (privacy leak)
+
+Removing a sub-user left their auto-created personal dashboard orphaned —
+and because the removal also cleared the matrix entry, the visibility
+reconcile STRIPPED the per-view `visible` list, making the removed user's
+private board visible to EVERYONE (found live on K0, KB #149 §5a).
+`sub_user/remove` now deletes the board entirely: frontend panel, lovelace
+config store, and both bookkeeping entries (idempotent branch included).
+Regression test asserts every trace is gone.
+
 ## 1.2.1 — 2026-07-11
 
 ### fix(bundle): join/setup wizard UI repaired — dedicated compilation on the component mount (#512)

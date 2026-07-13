@@ -2092,6 +2092,9 @@ class GASubUserRemoveView(HomeAssistantView):
             # Already gone — clean bookkeeping and report success (idempotent).
             (state.get("sub_users") or {}).pop(sub_user_id, None)
             (state.get("sub_user_dashboards") or {}).pop(sub_user_id, None)
+            await dashboards.async_delete_personal_dashboard(
+                hass, state, sub_user_id
+            )
             await store.async_save(state)
             return self.json({"status": "ok", "removed": sub_user_id})
 
@@ -2107,8 +2110,15 @@ class GASubUserRemoveView(HomeAssistantView):
 
         (state.get("sub_users") or {}).pop(sub_user_id, None)
         (state.get("sub_user_dashboards") or {}).pop(sub_user_id, None)
+        # The personal dashboard must DIE with the user — an orphaned board
+        # plus the visible-strip below made it public to everyone (KB #149 §5a).
+        removed_board = await dashboards.async_delete_personal_dashboard(
+            hass, state, sub_user_id
+        )
         await store.async_save(state)
         for url_path in assigned_paths:
+            if url_path == removed_board:
+                continue  # deleted, nothing to reconcile
             await _reconcile_dashboard_visibility(hass, url_path, state)
 
         _LOGGER.info("master %s removed sub-user %s", master.id, sub_user_id)
