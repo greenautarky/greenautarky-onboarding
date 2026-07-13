@@ -212,7 +212,7 @@ async def async_delete_personal_dashboard(
             dash = lovelace_data.dashboards.pop(url_path, None)
             if dash is not None and hasattr(dash, "async_delete"):
                 await dash.async_delete()
-    except Exception as err:  # noqa: BLE001 — removal must not fail on cleanup
+    except Exception as err:  # removal must not fail on cleanup
         _LOGGER.warning(
             "personal dashboard %s (user %s) cleanup incomplete: %s",
             url_path,

@@ -324,7 +324,7 @@ async def test_remove_deletes_personal_dashboard(hass) -> None:
     made it PUBLIC. Removal must delete panel + config + bookkeeping."""
     from greenautarky_onboarding.http import GASubUserRemoveView
 
-    store, state = _seed(hass)
+    _store, state = _seed(hass)
     _inject_lovelace(hass)
     master = await _make_master(hass)
     resp = await _join_sub_user(hass, master, "Otto")
