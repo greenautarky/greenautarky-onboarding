@@ -28,6 +28,7 @@ cleans up the throwaway sub-user via the master API.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import secrets
 import uuid
@@ -147,18 +148,34 @@ async def test_invite_join_and_personal_dashboard(socket_enabled) -> None:
             await pw_fields.nth(0).fill(sub_password)
             await pw_fields.nth(1).fill(sub_password)
             await page.get_by_role("button", name="Konto erstellen").click()
-            await page.wait_for_load_state("networkidle")
+            # The wizard auto-logs the new user in and lands on /lovelace —
+            # a live dashboard keeps websockets open, so "networkidle" never
+            # settles reliably (train run 6 timed out exactly here while the
+            # join had SUCCEEDED). The API poll below is the real assert.
+            try:
+                await page.wait_for_url("**/lovelace*", timeout=20000)
+            except playwright_async.TimeoutError:
+                pass
 
             # 4) the master's surface lists the new sub-user with an
-            # auto-created ga-home-* dashboard, and the board URL serves
-            r = await api.get(
-                "/api/greenautarky_onboarding/sub_user/list", headers=auth
-            )
-            assert r.ok, await r.text()
-            listing = await r.json()
-            sub = next(
-                s for s in listing["sub_users"] if s.get("name") == sub_name
-            )
+            # auto-created ga-home-* dashboard, and the board URL serves.
+            # Poll briefly — account creation finishes server-side just
+            # after the redirect.
+            sub = None
+            for _ in range(10):
+                r = await api.get(
+                    "/api/greenautarky_onboarding/sub_user/list", headers=auth
+                )
+                assert r.ok, await r.text()
+                listing = await r.json()
+                sub = next(
+                    (s for s in listing["sub_users"] if s.get("name") == sub_name),
+                    None,
+                )
+                if sub:
+                    break
+                await asyncio.sleep(2)
+            assert sub, f"sub-user {sub_name!r} never appeared: {listing}"
             sub_user_id = sub["user_id"]
             personal = [
                 d for d in (sub.get("dashboards") or [])
