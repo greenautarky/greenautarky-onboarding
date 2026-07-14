@@ -1,5 +1,40 @@
 # Changelog
 
+## 1.3.0 — 2026-07-14
+
+### feat(rooms): room-scoped dashboards — the master grants ROOMS, the dashboard is generated
+
+The master no longer hands out dashboards; he grants **rooms**. Each user's dashboard is
+generated in the browser on every load, from the rooms he may see — by the `ga-home`
+Lovelace strategy (ga-frontend-bundle 1.1.0), which asks the new `my_rooms` endpoint who
+the logged-in user is and what he may see.
+
+There is exactly ONE dashboard on the device: HA's default Overview, whose stored config
+becomes nothing but `{"strategy": {"type": "custom:ga-home"}}`. That panel is the only
+one HA cannot remove or hide, so we own its config instead of fighting it.
+
+No per-user dashboard is stored anymore ⇒ no panel registration, no boot re-registration,
+no per-view `visible` reconcile — and none of the orphan-board failure modes that class
+of code had (the 1.2.2 fix removes the symptom; this removes the cause).
+
+The scope decision is made server-side and returned WITH its reason:
+
+    no master AND no sub-users -> all    (device was never put into household mode)
+    master / admin             -> all
+    IS a sub-user              -> rooms  (empty grant = honest empty state)
+    tenant without a parent    -> all    (legacy device; it is his house)
+
+Only a real sub-user is ever restricted. Most of the fleet has neither a master flag nor
+a single HA area — such a device MUST keep showing its whole house.
+
+⚠️ Presentation scoping, not isolation: HA serves every entity to any authenticated
+non-admin over the WebSocket API. Measured on K0: a non-admin `get_states` returns all
+212 entities.
+
+New: `GET /api/greenautarky_onboarding/my_rooms`,
+`POST /api/greenautarky_onboarding/sub_user/assign_room`.
+
+
 ## 1.2.2 — 2026-07-13
 
 ### fix(sub-user): removal deletes the personal dashboard (privacy leak)
