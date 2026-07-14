@@ -77,6 +77,11 @@ from .http import (
     _migrate_legacy_pin,
     async_boot_register_personal_dashboards,
 )
+from .rooms import (
+    GAMyRoomsView,
+    GASubUserAssignRoomView,
+    async_install_home_strategy,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -227,6 +232,11 @@ async def _async_setup_common(hass: HomeAssistant) -> bool:
     hass.http.register_view(GASubUserSetEnabledView())
     hass.http.register_view(GAMasterConsolePageView())
 
+    # Room-scoped dashboards: the master grants ROOMS, and the single shared
+    # dashboard is generated per logged-in user by the ga-home strategy.
+    hass.http.register_view(GAMyRoomsView())
+    hass.http.register_view(GASubUserAssignRoomView())
+
     # v1.0.0 shipped the console-login HMAC secret at `/share/ga/…` —
     # addon-readable, an exfil risk. v1.0.1+ keeps it under `/config/` and
     # migrates the old file on first boot. Best-effort: failures log a
@@ -291,18 +301,19 @@ async def _async_setup_common(hass: HomeAssistant) -> bool:
         # /auth/authorize) — confirmed in HA Core 2025.11.x source.
         _patch_index_view_for_wizard_redirect(hass)
 
-    # Personal dashboards (ADR-0006 matrix): re-register component-owned
-    # dashboards + backfill masters/sub-users that predate the feature.
-    # Deferred to EVENT_HOMEASSISTANT_STARTED so lovelace + auth are up.
-    async def _personal_dashboards_started(_event: Event | None = None) -> None:
+    # Dashboards, deferred to EVENT_HOMEASSISTANT_STARTED so lovelace + auth are up:
+    #  1. the default Overview is (re)pointed at the ga-home strategy — that IS the
+    #     household dashboard now, generated per logged-in user from his rooms;
+    #  2. legacy per-user boards (`ga-home-<name>`, ADR-0006 v1) are re-registered so
+    #     they keep working until they are migrated away.
+    async def _dashboards_started(_event: Event | None = None) -> None:
+        await async_install_home_strategy(hass)
         await async_boot_register_personal_dashboards(hass)
 
     if hass.state is CoreState.running:
-        hass.async_create_task(_personal_dashboards_started())
+        hass.async_create_task(_dashboards_started())
     else:
-        hass.bus.async_listen_once(
-            EVENT_HOMEASSISTANT_STARTED, _personal_dashboards_started
-        )
+        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _dashboards_started)
 
     # Check for outdated consents and create repair issues if needed.
     # Only for devices with a REAL stored onboarding state — an old device
