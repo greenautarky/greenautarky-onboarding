@@ -411,7 +411,13 @@ class GAConsoleLoginView(HomeAssistantView):
         if not token or not sig:
             return web.Response(text="Missing 't' or 's' query param.", status=400)
 
-        secret = _read_console_secret()
+        # Newer aiohttp/HA combinations expose the Hass instance via the app
+        # key 'hass'; fall back to the request's HomeAssistantView base.
+        hass = request.app.get("hass") or request.app["hass"]
+
+        # Read the secret off-loop — it's a synchronous file read and HA flags
+        # any blocking I/O inside the event loop (`homeassistant.util.loop`).
+        secret = await hass.async_add_executor_job(_read_console_secret)
         if secret is None:
             _LOGGER.warning(
                 "console-login: secret file %s missing — fleet-manager has "
@@ -461,12 +467,6 @@ class GAConsoleLoginView(HomeAssistantView):
             )
             return web.Response(text="Nonce already used.", status=409)
         _SEEN_NONCES[nonce] = now_ts
-
-        hass = request.app[KEY_HASS] if (KEY_HASS := "hass") in request.app else None
-        # Newer aiohttp/HA combinations expose the Hass instance via the
-        # app key 'hass'; fall back to the request's HomeAssistantView base.
-        if hass is None:
-            hass = request.app["hass"]
 
         # Find the admin user. Strategy: configured user_id (DOMAIN data
         # `console_login_user_id`); else the first ACTIVE owner with auth.
