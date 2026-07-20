@@ -57,7 +57,9 @@ async def _token(rc, username: str, password: str) -> str:
         data={"client_id": CLIENT_ID, "username": username, "password": password},
     )
     assert r.ok, await r.text()
-    code = (await r.json())["result"]
+    body = await r.json()
+    assert "result" in body, f"login failed for {username!r}: {body.get('errors') or body}"
+    code = body["result"]
     r = await rc.post(
         "/auth/token",
         form={"grant_type": "authorization_code", "code": code, "client_id": CLIENT_ID},
@@ -89,6 +91,8 @@ async def test_scoped_subuser_in_the_browser() -> None:
                 data={"invite_pin": pin, "name": sub_name, "password": sub_pw, "datenschutz_consent": True},
             )
             assert r.ok, await r.text()
+            # join slugifies the display name — log in with the returned username
+            sub_username = (await r.json())["username"]
             listing = await (await api.get(f"{API}/sub_user/list", headers=mh)).json()
             sub_user_id = next(s["user_id"] for s in listing["sub_users"] if s.get("name") == sub_name)
 
@@ -99,7 +103,7 @@ async def test_scoped_subuser_in_the_browser() -> None:
             master_states = await (await api.get("/api/states", headers=mh)).json()
             victim = master_states[0]["entity_id"]
 
-            sub_tok = await _token(api, sub_name, sub_pw)
+            sub_tok = await _token(api, sub_username, sub_pw)
 
             # authenticate the browser the way the HA frontend does: hassTokens
             browser = await p.chromium.launch()
