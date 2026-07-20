@@ -54,7 +54,9 @@ async def _login(session, username: str, password: str) -> str:
         json={"client_id": CLIENT_ID, "username": username, "password": password},
     ) as resp:
         assert resp.status == 200, await resp.text()
-        code = (await resp.json())["result"]
+        body = await resp.json()
+        assert "result" in body, f"login failed for {username!r}: {body.get('errors') or body}"
+        code = body["result"]
     async with session.post(
         f"{DEVICE_URL}/auth/token",
         data={"grant_type": "authorization_code", "code": code, "client_id": CLIENT_ID},
@@ -92,6 +94,9 @@ async def test_entity_scoping_enforces_state_and_control() -> None:
                 json={"invite_pin": pin, "name": sub_name, "password": sub_pw, "datenschutz_consent": True},
             ) as r:
                 assert r.status == 200, await r.text()
+                # join slugifies the display name — the LOGIN username comes
+                # back in the response (e.g. "ScopeTest ab12cd" -> "scopetest_ab12cd")
+                sub_username = (await r.json())["username"]
 
             # capture the sub-user id for cleanup
             async with session.get(f"{API}/sub_user/list", headers=master_h) as r:
@@ -100,7 +105,7 @@ async def test_entity_scoping_enforces_state_and_control() -> None:
                     s["user_id"] for s in (await r.json())["sub_users"] if s.get("name") == sub_name
                 )
 
-            sub_h = {"Authorization": f"Bearer {await _login(session, sub_name, sub_pw)}"}
+            sub_h = {"Authorization": f"Bearer {await _login(session, sub_username, sub_pw)}"}
 
             # baseline: an un-scoped sub-user sees the whole house
             base = await _n_states(session, sub_h)
