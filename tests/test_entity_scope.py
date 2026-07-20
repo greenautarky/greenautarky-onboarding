@@ -14,13 +14,14 @@ import json
 from pathlib import Path
 from typing import Any
 
-from greenautarky_onboarding import entity_scope, rooms
-from greenautarky_onboarding.const import DOMAIN, MASTER_USERS_FILE
 from homeassistant.auth.const import GROUP_ID_USER
 from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+from greenautarky_onboarding import entity_scope, rooms
+from greenautarky_onboarding.const import DOMAIN, MASTER_USERS_FILE
 
 READ, CONTROL = "read", "control"
 

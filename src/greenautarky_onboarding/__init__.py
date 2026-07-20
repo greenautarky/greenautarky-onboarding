@@ -318,7 +318,7 @@ async def _async_setup_common(hass: HomeAssistant) -> bool:
 
         try:
             await entity_scope.async_reconcile_all(hass, _get_state(hass) or {})
-        except Exception:  # noqa: BLE001 - hardening must never block boot
+        except Exception:
             _LOGGER.exception("entity_scope: boot reconcile failed")
 
     if hass.state is CoreState.running:
