@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.4.0 — 2026-07-20
+- feat(rooms): Stage A entity scoping — native per-user room boundary (Odoo #516, PR #17).
+  Sub-users with assigned rooms get an HA-native per-entity read/control policy
+  (get_states / subscribe_entities / call_service / REST). **Default OFF** — enable via
+  admin view `/api/greenautarky_onboarding/entity_scoping`. Known Stage-B gaps
+  (history/logbook/template) documented in Odoo #516.
+- style: ruff fixes (unused noqa, import sort).
+
 ## 1.3.0 — 2026-07-14
 
 ### feat(rooms): room-scoped dashboards — the master grants ROOMS, the dashboard is generated
