@@ -130,7 +130,7 @@ async def test_entity_scoping_enforces_state_and_control() -> None:
                 assert r.status == 200, await r.text()
 
             # a fresh token so no cached connection carries old permissions
-            sub_h = {"Authorization": f"Bearer {await _login(session, sub_name, sub_pw)}"}
+            sub_h = {"Authorization": f"Bearer {await _login(session, sub_username, sub_pw)}"}
 
             scoped = await _n_states(session, sub_h)
             assert scoped < base, f"scoping did not shrink the view: {scoped} vs {base}"
