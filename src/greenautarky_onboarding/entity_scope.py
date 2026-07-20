@@ -80,6 +80,17 @@ def _group_id(user_id: str) -> str:
     return GROUP_PREFIX + user_id
 
 
+def is_user_scoped(user: Any) -> bool:
+    """True iff this user currently carries a Stage-A room scope.
+
+    Ground truth = membership in a ``ga_scope_*`` group (added by ``async_apply``,
+    removed by ``async_clear``). The leak-guard uses this so it tracks the
+    APPLIED policy, not just the config flag: a user Core is not restricting is
+    a user Stage B leaves alone.
+    """
+    return any(g.id.startswith(GROUP_PREFIX) for g in getattr(user, "groups", ()))
+
+
 def _invalidate(user: Any) -> None:
     """Drop the cached permission object so the next request recomputes it."""
     if hasattr(user, "invalidate_cache"):

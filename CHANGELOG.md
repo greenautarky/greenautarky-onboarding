@@ -1,3 +1,14 @@
+## 1.5.0 — 2026-07-20
+- feat(privacy): Stage B leak-guard (Odoo #516). Closes the read paths Core
+  does not check against the Stage-A entity policy for a room-scoped sub-user:
+  `render_template` is denied; `history/history_during_period`,
+  `logbook/get_events` and the entity/device/area registry-list commands have
+  their results filtered to permitted entities via
+  `user.permissions.check_entity`. Installed at boot alongside Stage A;
+  idempotent and a pass-through for admins and every non-scoped user, so it is
+  safe with scoping OFF (the default). Streaming variants (`history/stream`,
+  `logbook/event_stream`) are increment 2. Design: docs/STAGE-B-LEAK-WRAPPER.md.
+
 # Changelog
 
 ## 1.4.0 — 2026-07-20

@@ -321,6 +321,17 @@ async def _async_setup_common(hass: HomeAssistant) -> bool:
         except Exception:
             _LOGGER.exception("entity_scope: boot reconcile failed")
 
+        # Stage B: wrap the read paths Core does not check against the entity
+        # policy (history/logbook/registry-lists/render_template). Idempotent
+        # and a pass-through for every non-scoped user, so it installs
+        # unconditionally — it only ever restricts a genuinely scoped sub-user.
+        from . import leak_guard
+
+        try:
+            leak_guard.install(hass)
+        except Exception:
+            _LOGGER.exception("leak_guard: install failed")
+
     if hass.state is CoreState.running:
         hass.async_create_task(_dashboards_started())
     else:
