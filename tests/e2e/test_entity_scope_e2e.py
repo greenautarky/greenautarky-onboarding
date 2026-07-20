@@ -35,6 +35,10 @@ pytestmark = [pytest.mark.e2e, pytest.mark.asyncio]
 DEVICE_URL = os.environ.get("GA_DEVICE_URL", "").rstrip("/")
 MASTER_USERNAME = os.environ.get("GA_DEVICE_MASTER_USERNAME", "")
 MASTER_PASSWORD = os.environ.get("GA_DEVICE_MASTER_PASSWORD", "")
+# entity_scoping is admin-only (CI master = plain tenant user). The testgate
+# hands us the device admin credential; locally fall back to master creds.
+ADMIN_USERNAME = os.environ.get("GA_DEVICE_ADMIN_USERNAME", "")
+ADMIN_PASSWORD = os.environ.get("GA_DEVICE_ADMIN_PASSWORD", "")
 
 requires_device = pytest.mark.skipif(
     not (DEVICE_URL and MASTER_USERNAME and MASTER_PASSWORD),
@@ -79,6 +83,10 @@ async def test_scoped_subuser_in_the_browser() -> None:
         api = await p.request.new_context(base_url=DEVICE_URL)
         master_tok = await _token(api, MASTER_USERNAME, MASTER_PASSWORD)
         mh = {"Authorization": f"Bearer {master_tok}"}
+        if ADMIN_USERNAME and ADMIN_PASSWORD:
+            ah = {"Authorization": f"Bearer {await _token(api, ADMIN_USERNAME, ADMIN_PASSWORD)}"}
+        else:
+            ah = mh
 
         pin = (await (await api.post(f"{API}/sub_user/invite", headers=mh, data={})).json())["pin"]
 
@@ -96,8 +104,8 @@ async def test_scoped_subuser_in_the_browser() -> None:
             listing = await (await api.get(f"{API}/sub_user/list", headers=mh)).json()
             sub_user_id = next(s["user_id"] for s in listing["sub_users"] if s.get("name") == sub_name)
 
-            scoping_was_on = (await (await api.get(f"{API}/entity_scoping", headers=mh)).json())["enabled"]
-            r = await api.post(f"{API}/entity_scoping", headers=mh, data={"enabled": True})
+            scoping_was_on = (await (await api.get(f"{API}/entity_scoping", headers=ah)).json())["enabled"]
+            r = await api.post(f"{API}/entity_scoping", headers=ah, data={"enabled": True})
             assert r.ok, await r.text()
 
             master_states = await (await api.get("/api/states", headers=mh)).json()
@@ -140,7 +148,7 @@ async def test_scoped_subuser_in_the_browser() -> None:
             assert scoped["victimStatus"] == 401, f"non-scoped entity readable in browser: {scoped}"
             assert scoped["scope"] == "rooms", f"my_rooms scope was {scoped['scope']}"
         finally:
-            await api.post(f"{API}/entity_scoping", headers=mh, data={"enabled": scoping_was_on})
+            await api.post(f"{API}/entity_scoping", headers=ah, data={"enabled": scoping_was_on})
             if sub_user_id:
                 await api.post(f"{API}/sub_user/remove", headers=mh, data={"sub_user_id": sub_user_id})
             if browser:

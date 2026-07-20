@@ -32,6 +32,11 @@ pytestmark = [pytest.mark.device, pytest.mark.asyncio]
 DEVICE_URL = os.environ.get("GA_DEVICE_URL", "").rstrip("/")
 MASTER_USERNAME = os.environ.get("GA_DEVICE_MASTER_USERNAME", "")
 MASTER_PASSWORD = os.environ.get("GA_DEVICE_MASTER_PASSWORD", "")
+# The entity_scoping toggle is admin-only (the CI master is a plain tenant
+# user). The testgate hands us the device admin credential; locally the
+# master may itself be an admin — fall back to master creds then.
+ADMIN_USERNAME = os.environ.get("GA_DEVICE_ADMIN_USERNAME", "")
+ADMIN_PASSWORD = os.environ.get("GA_DEVICE_ADMIN_PASSWORD", "")
 
 requires_device = pytest.mark.skipif(
     not (DEVICE_URL and MASTER_USERNAME and MASTER_PASSWORD),
@@ -81,6 +86,10 @@ async def test_entity_scoping_enforces_state_and_control() -> None:
 
     async with aiohttp.ClientSession() as session:
         master_h = {"Authorization": f"Bearer {await _login(session, MASTER_USERNAME, MASTER_PASSWORD)}"}
+        if ADMIN_USERNAME and ADMIN_PASSWORD:
+            admin_h = {"Authorization": f"Bearer {await _login(session, ADMIN_USERNAME, ADMIN_PASSWORD)}"}
+        else:
+            admin_h = master_h
 
         async with session.post(f"{API}/sub_user/invite", headers=master_h, json={}) as r:
             assert r.status == 200, await r.text()
@@ -112,12 +121,12 @@ async def test_entity_scoping_enforces_state_and_control() -> None:
             assert base > 1, f"expected a populated house, got {base} states"
 
             # remember prior flag so we restore it
-            async with session.get(f"{API}/entity_scoping", headers=master_h) as r:
+            async with session.get(f"{API}/entity_scoping", headers=admin_h) as r:
                 assert r.status == 200, await r.text()
                 scoping_was_on = (await r.json())["enabled"]
 
             # ENABLE scoping. The sub-user has no room grant -> scoped to nothing.
-            async with session.post(f"{API}/entity_scoping", headers=master_h, json={"enabled": True}) as r:
+            async with session.post(f"{API}/entity_scoping", headers=admin_h, json={"enabled": True}) as r:
                 assert r.status == 200, await r.text()
 
             # a fresh token so no cached connection carries old permissions
@@ -148,7 +157,7 @@ async def test_entity_scoping_enforces_state_and_control() -> None:
                 assert r.status == 200, f"history of {victim} was {r.status} (Stage B changed?)"
         finally:
             # restore the flag + remove the throwaway sub-user
-            await session.post(f"{API}/entity_scoping", headers=master_h, json={"enabled": scoping_was_on})
+            await session.post(f"{API}/entity_scoping", headers=admin_h, json={"enabled": scoping_was_on})
             if sub_user_id:
                 await session.post(
                     f"{API}/sub_user/remove", headers=master_h, json={"sub_user_id": sub_user_id}
