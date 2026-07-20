@@ -1,3 +1,13 @@
+## 1.6.1 — 2026-07-20
+- fix(console-login): read the HMAC secret off the event loop.
+  `GAConsoleLoginView.get()` called `_read_console_secret()` (a synchronous
+  `Path.read_text`) directly in the async handler, which HA's
+  `homeassistant.util.loop` blocking-call detector flags on every
+  `/api/ga_remote_login` hit. It now runs in an executor via
+  `hass.async_add_executor_job`; `hass` is resolved once at the top of the
+  handler (the duplicate later lookup is removed). No behaviour change — the
+  missing-secret path still returns 503, a bad signature still 403.
+
 ## 1.6.0 — 2026-07-20
 - feat(privacy): Stage B increment 2 — the streaming variants. For a
   room-scoped sub-user, `history/stream` and `logbook/event_stream` requests
