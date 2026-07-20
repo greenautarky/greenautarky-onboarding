@@ -53,6 +53,15 @@ FILTER_COMMANDS: dict[str, str] = {
 }
 
 
+# Streaming commands (increment 2): they push via ``send_message`` over the
+# stream's lifetime, so output-interception is impractical — instead the
+# REQUEST is pruned to permitted entities before delegation. Empty after
+# pruning → deny. ``logbook/event_stream`` without any entity_ids/device_ids
+# is a whole-home stream: for a scoped user the permitted entity list is
+# INJECTED so the logbook panel keeps working, scoped to their rooms.
+PRUNE_COMMANDS = ("history/stream", "logbook/event_stream")
+
+
 def _may_read(user: Any, entity_id: str) -> bool:
     return bool(entity_id) and user.permissions.check_entity(entity_id, POLICY_READ)
 
@@ -108,6 +117,45 @@ def _filter_result(hass: HomeAssistant, user: Any, shape: str, result: Any) -> A
     return result
 
 
+def _pruned_stream_msg(
+    hass: HomeAssistant, user: Any, command: str, msg: dict[str, Any]
+) -> dict[str, Any] | None:
+    """A copy of ``msg`` restricted to what the user may read — None = deny.
+
+    ``history/stream`` requires entity_ids; ``logbook/event_stream`` may carry
+    entity_ids and/or device_ids, or neither (whole home — inject the permitted
+    list instead). Runs AFTER schema validation (the wrapper IS the handler).
+    """
+    out = dict(msg)
+    requested = msg.get("entity_ids")
+    if requested is not None:
+        allowed = [e for e in requested if _may_read(user, e)]
+        if not allowed:
+            return None
+        out["entity_ids"] = allowed
+
+    device_ids = msg.get("device_ids")
+    if device_ids is not None:
+        permitted = _permitted_entities(hass, user)
+        ent_reg = er.async_get(hass)
+        keep = {e.device_id for e in ent_reg.entities.values()
+                if e.entity_id in permitted and e.device_id}
+        allowed_devs = [d for d in device_ids if d in keep]
+        if not allowed_devs and requested is None:
+            return None
+        if allowed_devs:
+            out["device_ids"] = allowed_devs
+        else:
+            out.pop("device_ids", None)
+
+    if command == "logbook/event_stream" and requested is None and device_ids is None:
+        permitted = sorted(_permitted_entities(hass, user))
+        if not permitted:
+            return None
+        out["entity_ids"] = permitted
+    return out
+
+
 def _wrap(hass: HomeAssistant, command: str, original: Callable, shape: str | None) -> Callable:
     @callback
     def guarded(hass_: HomeAssistant, connection: Any, msg: dict[str, Any]) -> Any:
@@ -122,6 +170,16 @@ def _wrap(hass: HomeAssistant, command: str, original: Callable, shape: str | No
                 "not permitted for a room-scoped user",
             )
             return None
+
+        if command in PRUNE_COMMANDS:
+            pruned = _pruned_stream_msg(hass_, user, command, msg)
+            if pruned is None:
+                connection.send_error(
+                    msg["id"], ws_const.ERR_UNAUTHORIZED,
+                    "no permitted entities in this request",
+                )
+                return None
+            return original(hass_, connection, pruned)
 
         # Intercept the single result the handler sends, filter, restore.
         orig_send_result = connection.send_result
@@ -163,7 +221,7 @@ def install(hass: HomeAssistant) -> int:
     if not registry:
         return 0
     guarded = 0
-    for command in (*DENY_COMMANDS, *FILTER_COMMANDS):
+    for command in (*DENY_COMMANDS, *PRUNE_COMMANDS, *FILTER_COMMANDS):
         entry = registry.get(command)
         if entry is None:
             continue  # component not loaded on this device — nothing to guard

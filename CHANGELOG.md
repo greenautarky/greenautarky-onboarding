@@ -1,3 +1,11 @@
+## 1.6.0 — 2026-07-20
+- feat(privacy): Stage B increment 2 — the streaming variants. For a
+  room-scoped sub-user, `history/stream` and `logbook/event_stream` requests
+  are PRUNED to permitted entities before delegation (deny when nothing
+  remains); a whole-home `logbook/event_stream` (no entity/device filter) gets
+  the permitted entity list injected, so the logbook panel keeps working —
+  scoped to their rooms. Completes the #516 leak surface.
+
 ## 1.5.0 — 2026-07-20
 - feat(privacy): Stage B leak-guard (Odoo #516). Closes the read paths Core
   does not check against the Stage-A entity policy for a room-scoped sub-user:
