@@ -78,6 +78,7 @@ from .http import (
     async_boot_register_personal_dashboards,
 )
 from .rooms import (
+    GAEntityScopingView,
     GAMyRoomsView,
     GASubUserAssignRoomView,
     async_install_home_strategy,
@@ -236,6 +237,7 @@ async def _async_setup_common(hass: HomeAssistant) -> bool:
     # dashboard is generated per logged-in user by the ga-home strategy.
     hass.http.register_view(GAMyRoomsView())
     hass.http.register_view(GASubUserAssignRoomView())
+    hass.http.register_view(GAEntityScopingView())
 
     # v1.0.0 shipped the console-login HMAC secret at `/share/ga/…` —
     # addon-readable, an exfil risk. v1.0.1+ keeps it under `/config/` and
@@ -309,6 +311,15 @@ async def _async_setup_common(hass: HomeAssistant) -> bool:
     async def _dashboards_started(_event: Event | None = None) -> None:
         await async_install_home_strategy(hass)
         await async_boot_register_personal_dashboards(hass)
+        # Stage A: (re)apply per-user entity scopes from the room matrix. No-op
+        # when the `entity_scoping_enabled` flag is off (default); self-heals any
+        # leftover scope. Runs here so the entity/area registries + auth are up.
+        from . import entity_scope
+
+        try:
+            await entity_scope.async_reconcile_all(hass, _get_state(hass) or {})
+        except Exception:
+            _LOGGER.exception("entity_scope: boot reconcile failed")
 
     if hass.state is CoreState.running:
         hass.async_create_task(_dashboards_started())

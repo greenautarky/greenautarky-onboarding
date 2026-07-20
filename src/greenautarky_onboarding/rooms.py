@@ -36,10 +36,13 @@ Only a real sub-user is ever restricted. **A device we have not configured can
 never be made poorer by this feature** — that is the load-bearing rule, because
 most of the fleet today has neither a master flag nor a single HA area.
 
-⚠️ This is PRESENTATION scoping, not isolation. HA serves every entity to any
-authenticated non-admin over the WebSocket API (``render_template``, history and
-the registry lists are not permission-checked) — verified live: a non-admin
-``get_states`` on K0 returns all 212 entities. Do not sell it as tenant isolation.
+⚠️ By itself this is PRESENTATION scoping, not isolation: HA serves every entity
+to any authenticated non-admin over the WebSocket API. To make it an actual
+boundary on the state-read + service-control planes, enable :mod:`entity_scope`
+(Stage A, default OFF) — it compiles the room assignment into a native per-user
+entity permission. Even then ``render_template`` / history / logbook / registry
+lists stay open until the Stage B wrapper closes them. Do not sell room scoping
+as tenant isolation unless BOTH stages are on.
 """
 
 from __future__ import annotations
@@ -240,6 +243,13 @@ class GASubUserAssignRoomView(HomeAssistantView):
         matrix[sub_user_id] = sorted(rooms)
         await _get_store(hass).async_save(state)
 
+        # Stage A: if entity scoping is enabled on this device, turn the new room
+        # set into a native per-user entity permission. No-op (and self-healing)
+        # when disabled — see entity_scope.async_reconcile_user.
+        from . import entity_scope
+
+        await entity_scope.async_reconcile_user(hass, sub_user_id, state)
+
         _LOGGER.info(
             "rooms: master %s %s %s for sub-user %s",
             master.id,
@@ -248,3 +258,43 @@ class GASubUserAssignRoomView(HomeAssistantView):
             sub_user_id,
         )
         return self.json({"status": "ok", "areas": matrix[sub_user_id]})
+
+
+class GAEntityScopingView(HomeAssistantView):
+    """Admin-only: turn the Stage-A entity boundary on/off for this device.
+
+    GET  -> {"enabled": bool}
+    POST {"enabled": bool} -> set the flag + reconcile every sub-user's scope.
+    Default is OFF: room scoping stays presentation-only until an operator
+    explicitly enables the enforcement (it changes what sub-users see over the
+    API, so it must be a deliberate per-device choice).
+    """
+
+    url = "/api/greenautarky_onboarding/entity_scoping"
+    name = "api:greenautarky_onboarding:entity_scoping"
+    requires_auth = True
+
+    async def get(self, request: web.Request) -> web.Response:
+        from . import entity_scope
+        from .http import _get_state
+
+        hass: HomeAssistant = request.app["hass"]
+        return self.json({"enabled": entity_scope.is_enabled(_get_state(hass))})
+
+    async def post(self, request: web.Request) -> web.Response:
+        from . import entity_scope
+        from .http import _get_state, _get_store
+
+        hass: HomeAssistant = request.app["hass"]
+        user = request["hass_user"]
+        if not (getattr(user, "is_admin", False) or getattr(user, "is_owner", False)):
+            return web.json_response({"message": "admin only"}, status=403)
+
+        body = await request.json()
+        enabled = bool(body.get("enabled", False))
+        state = _get_state(hass)
+        state[entity_scope.STATE_ENABLED] = enabled
+        await _get_store(hass).async_save(state)
+        await entity_scope.async_reconcile_all(hass, state)
+        _LOGGER.warning("entity_scope: enforcement %s by %s", "ENABLED" if enabled else "disabled", user.id)
+        return self.json({"enabled": enabled})
