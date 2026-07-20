@@ -167,3 +167,70 @@ async def test_scoped_user_result_is_filtered(hass):
     if res is not None:
         await res
     assert conn.results == [[{"entity_id": "light.living"}]]
+
+
+# ─── increment 2: stream request pruning ─────────────────────────────
+
+
+def test_prune_history_stream_filters_requested_entities():
+    u = _perm({"light.living"})
+    out = leak_guard._pruned_stream_msg(
+        None, u, "history/stream",
+        {"id": 1, "entity_ids": ["light.living", "light.bedroom"], "start_time": "x"})
+    assert out["entity_ids"] == ["light.living"]
+    assert out["start_time"] == "x"
+
+
+def test_prune_history_stream_denies_when_nothing_permitted():
+    u = _perm(set())
+    out = leak_guard._pruned_stream_msg(
+        None, u, "history/stream", {"id": 1, "entity_ids": ["light.bedroom"]})
+    assert out is None
+
+
+async def test_prune_logbook_whole_home_injects_permitted(hass):
+    from homeassistant.helpers import entity_registry as er
+    reg = er.async_get(hass)
+    entry = reg.async_get_or_create("light", "test", "u1")
+    u = _perm({entry.entity_id})
+    out = leak_guard._pruned_stream_msg(
+        hass, u, "logbook/event_stream", {"id": 1, "start_time": "x"})
+    assert out["entity_ids"] == [entry.entity_id]
+
+
+async def test_prune_logbook_whole_home_denies_empty_scope(hass):
+    u = _perm(set())
+    out = leak_guard._pruned_stream_msg(
+        hass, u, "logbook/event_stream", {"id": 1, "start_time": "x"})
+    assert out is None
+
+
+async def test_wrapped_stream_delegates_with_pruned_msg(hass):
+    from homeassistant.setup import async_setup_component
+    await async_setup_component(hass, "websocket_api", {})
+
+    seen = {}
+
+    def fake_original(h, c, m):
+        seen.update(m)
+
+    wrapped = leak_guard._wrap(hass, "history/stream", fake_original, None)
+    u = _perm({"light.living"})
+    conn = _Conn(u)
+    wrapped(hass, conn, {"id": 1, "entity_ids": ["light.living", "light.bedroom"]})
+    assert seen.get("entity_ids") == ["light.living"]
+    assert not conn.errors
+
+
+async def test_wrapped_stream_denies_fully_forbidden_request(hass):
+    from homeassistant.setup import async_setup_component
+    await async_setup_component(hass, "websocket_api", {})
+
+    def fake_original(h, c, m):  # pragma: no cover - must not be reached
+        raise AssertionError("delegated despite deny")
+
+    wrapped = leak_guard._wrap(hass, "history/stream", fake_original, None)
+    u = _perm(set())
+    conn = _Conn(u)
+    wrapped(hass, conn, {"id": 1, "entity_ids": ["light.bedroom"]})
+    assert conn.errors

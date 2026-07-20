@@ -16,7 +16,7 @@ outside their rooms through them. Stage B closes those.
 | `config/entity_registry/list` · `list_for_display` · `get_entries` | the full entity registry (names, areas, devices) | **filter** to permitted entities |
 | `config/device_registry/list` | the full device registry | **filter** to devices that own a permitted entity |
 | `config/area_registry/list` | every area name | **filter** to areas that contain a permitted entity |
-| `history/stream` · `logbook/event_stream` | streaming variants | **Increment 2** (they push via `send_message`, not `send_result`) |
+| `history/stream` · `logbook/event_stream` | streaming variants | **prune the REQUEST** to permitted entities before delegation (deny when empty; a whole-home logbook stream gets the permitted list injected) |
 
 `subscribe_entities` is already Stage-A-enforced (Core native) — not a Stage-B
 concern. `get_states` / REST likewise.
