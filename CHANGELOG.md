@@ -1,3 +1,13 @@
+## 1.8.0 — 2026-07-21
+- change(privacy): entity scoping is now **default ON** (Odoo #516). It only
+  ever restricts a real sub-user (reconcile iterates the sub_users map — empty
+  => no-op; admins/owner/master bypass), so arming it by default costs nothing
+  on a device without sub-users, and it is the fail-CLOSED choice: a new
+  sub-user sees nothing until the master grants rooms rather than the whole
+  house until restricted. Only an UNSET flag defaults on — the admin toggle
+  still disables it explicitly. Convergence of pre-existing / old devices onto
+  this state = Odoo #560 (separate session).
+
 ## 1.7.0 — 2026-07-20
 - feat(privacy): Stage B increment 3 — close the last leak, REST
   `GET /api/history/period` (Odoo #516). `HistoryPeriodView.get` has no entity
