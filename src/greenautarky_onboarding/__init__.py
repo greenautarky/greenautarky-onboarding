@@ -312,7 +312,7 @@ async def _async_setup_common(hass: HomeAssistant) -> bool:
         await async_install_home_strategy(hass)
         await async_boot_register_personal_dashboards(hass)
         # Stage A: (re)apply per-user entity scopes from the room matrix. No-op
-        # when the `entity_scoping_enabled` flag is off (default); self-heals any
+        # for real sub-users only (no-op without sub_users); self-heals any
         # leftover scope. Runs here so the entity/area registries + auth are up.
         from . import entity_scope
 

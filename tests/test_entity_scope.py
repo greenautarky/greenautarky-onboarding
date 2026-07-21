@@ -196,11 +196,38 @@ async def test_reconcile_disabled_clears(hass) -> None:
     await _entity_in_area(hass, "light.living", living)
     user = await _sub_user(hass)
     await entity_scope.async_apply(hass, user.id, {living.id})  # leftover scope
-    state = {"sub_users": {user.id: {}}, "sub_user_areas": {user.id: [living.id]}}  # flag OFF
+    state = {
+        entity_scope.STATE_ENABLED: False,  # EXPLICITLY off (default is now on)
+        "sub_users": {user.id: {}},
+        "sub_user_areas": {user.id: [living.id]},
+    }
 
     await entity_scope.async_reconcile_user(hass, user.id, state)
 
     assert user.permissions.access_all_entities(READ) is True  # cleared
+
+
+async def test_default_on_unset_flag_is_enabled() -> None:
+    """An UNSET flag defaults to ON (2026-07-21) — an explicit False stays off."""
+    assert entity_scope.is_enabled({}) is True
+    assert entity_scope.is_enabled({entity_scope.STATE_ENABLED: False}) is False
+    assert entity_scope.is_enabled({entity_scope.STATE_ENABLED: True}) is True
+
+
+async def test_default_on_scopes_subuser_without_explicit_flag(hass) -> None:
+    """With the flag UNSET, a sub-user with rooms is still scoped (default on)."""
+    living = ar.async_get(hass).async_create("Living")
+    await _entity_in_area(hass, "light.living", living)
+    user = await _sub_user(hass)
+    state = {  # NOTE: no STATE_ENABLED key
+        "sub_users": {user.id: {}},
+        "sub_user_areas": {user.id: [living.id]},
+    }
+
+    await entity_scope.async_reconcile_user(hass, user.id, state)
+
+    assert user.permissions.access_all_entities(READ) is False
+    assert user.permissions.check_entity("light.living", READ) is True
 
 
 async def test_reconcile_subuser_applies_when_enabled(hass) -> None:

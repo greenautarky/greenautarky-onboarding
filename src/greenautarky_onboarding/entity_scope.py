@@ -27,7 +27,7 @@ Admins/owner are never scoped (HA bypasses them by design).
 Gating
 ------
 Default OFF. Enabling it CHANGES what a sub-user can see over the API, so it is
-opt-in per device via the onboarding state flag ``entity_scoping_enabled`` (set by
+on by default (only restricts real sub-users); explicitly disable via ``entity_scoping_enabled`` (set by
 the admin-only entity_scoping view). Masters, admins, owners and
 unmanaged/legacy devices are never scoped (mirrors :func:`rooms.async_scope_for`).
 
@@ -54,8 +54,18 @@ _READ_CONTROL = {"read": True, "control": True}
 
 
 def is_enabled(state: dict[str, Any]) -> bool:
-    """Whether entity scoping is active on this device (default OFF)."""
-    return bool(state.get(STATE_ENABLED))
+    """Whether entity scoping is active on this device.
+
+    DEFAULT ON (2026-07-21): scoping only ever restricts a real sub-user
+    (async_reconcile_all iterates the sub_users map — empty => no-op; admins /
+    owner / the master bypass entirely), so arming it costs nothing on a device
+    without sub-users. Enabling by default is also the fail-CLOSED choice: a
+    freshly-created sub-user sees nothing until the master grants rooms, instead
+    of seeing the whole house until explicitly restricted. The admin toggle
+    (POST /api/greenautarky_onboarding/entity_scoping {enabled:false}) still
+    turns it off explicitly; only an UNSET flag defaults to on.
+    """
+    return bool(state.get(STATE_ENABLED, True))
 
 
 def compile_entities(hass: HomeAssistant, area_ids: set[str]) -> set[str]:
