@@ -1,3 +1,13 @@
+## 1.7.0 — 2026-07-20
+- feat(privacy): Stage B increment 3 — close the last leak, REST
+  `GET /api/history/period` (Odoo #516). `HistoryPeriodView.get` has no entity
+  permission check, so a scoped sub-user could read any entity's history over
+  REST even with every websocket path closed. The guard class-patches `get`
+  (idempotent) to reduce the REQUIRED `filter_entity_id` to the entities the
+  user may read (empty → `[]`), delegating untouched for admins and every
+  non-scoped user. Logbook has no REST view; REST states/call_service are
+  already Stage-A-enforced. With inc 1–3 the room-scoping boundary is airtight.
+
 ## 1.6.1 — 2026-07-20
 - fix(console-login): read the HMAC secret off the event loop.
   `GAConsoleLoginView.get()` called `_read_console_secret()` (a synchronous

@@ -8,9 +8,11 @@ outside their rooms through those. This module re-registers each of those
 websocket commands with a wrapper that filters (or denies) the response for a
 scoped user, and delegates untouched for everyone else.
 
-Design: ``docs/STAGE-B-LEAK-WRAPPER.md``. Covers the request/response commands
-(increment 1); the streaming variants (``history/stream`` /
-``logbook/event_stream``) are increment 2.
+Design: ``docs/STAGE-B-LEAK-WRAPPER.md``. Increment 1 = request/response WS
+commands; increment 2 = the streaming variants (``history/stream`` /
+``logbook/event_stream``); increment 3 = the one legacy REST leak
+(``GET /api/history/period``). With all three the room-scoping boundary is
+airtight.
 """
 
 from __future__ import annotations
@@ -234,4 +236,50 @@ def install(hass: HomeAssistant) -> int:
         async_register_command(hass, command, wrapped, schema)
         guarded += 1
     _LOGGER.info("leak_guard: guarding %d websocket command(s)", guarded)
+    install_rest_history_guard()
     return guarded
+
+
+_REST_GUARD_MARKER = "_ga_rest_history_guarded"
+
+
+@callback
+def install_rest_history_guard() -> None:
+    """Increment 3 — guard the one legacy REST leak: GET /api/history/period.
+
+    ``HistoryPeriodView.get`` does NOT check the entity policy, so a scoped
+    sub-user with a valid token could read any entity's history over REST even
+    with every websocket path closed. ``filter_entity_id`` is REQUIRED by the
+    view, so the guard simply reduces the requested ids to the ones the user
+    may read (empty -> ``[]``) and delegates. Class-level + idempotent: one
+    HA instance per device, and the wrapper is a pass-through for every
+    non-scoped user. Logbook has no REST view in current HA; REST states +
+    call_service are already Stage-A-enforced by Core.
+    """
+    try:
+        from homeassistant.components.history import HistoryPeriodView
+    except Exception:  # component absent — nothing to guard
+        return
+    if getattr(HistoryPeriodView.get, _REST_GUARD_MARKER, False):
+        return
+    original = HistoryPeriodView.get
+
+    async def guarded_get(self: Any, request: Any, datetime: str | None = None) -> Any:
+        user = request.get("hass_user")
+        requested = request.query.get("filter_entity_id")
+        if (user is None or getattr(user, "is_admin", False)
+                or getattr(user, "is_owner", False) or not is_user_scoped(user)
+                or not requested):
+            return await original(self, request, datetime)
+        allowed = [e for e in requested.split(",")
+                   if user.permissions.check_entity(e, POLICY_READ)]
+        if not allowed:
+            return self.json([])
+        request = request.clone(
+            rel_url=request.rel_url.update_query(filter_entity_id=",".join(allowed))
+        )
+        return await original(self, request, datetime)
+
+    guarded_get._ga_rest_history_guarded = True  # type: ignore[attr-defined]
+    HistoryPeriodView.get = guarded_get  # type: ignore[assignment]
+    _LOGGER.info("leak_guard: REST /api/history/period guarded")

@@ -234,3 +234,93 @@ async def test_wrapped_stream_denies_fully_forbidden_request(hass):
     conn = _Conn(u)
     wrapped(hass, conn, {"id": 1, "entity_ids": ["light.bedroom"]})
     assert conn.errors
+
+
+# ─── increment 3: REST /api/history/period guard ──────────────────────
+
+
+class _FakeURL:
+    def __init__(self, q):
+        self._q = dict(q)
+
+    def update_query(self, **kw):
+        n = dict(self._q)
+        n.update(kw)
+        return _FakeURL(n)
+
+    @property
+    def query(self):
+        return self._q
+
+
+class _FakeReq:
+    def __init__(self, user, filter_ids):
+        self._user = user
+        self.rel_url = _FakeURL({"filter_entity_id": filter_ids} if filter_ids else {})
+
+    @property
+    def query(self):
+        return self.rel_url.query
+
+    def get(self, k, default=None):
+        return self._user if k == "hass_user" else default
+
+    def clone(self, rel_url=None):
+        r = _FakeReq(self._user, None)
+        r.rel_url = rel_url
+        return r
+
+
+class _FakeView:
+    def json(self, data):
+        return ("JSON", data)
+
+
+async def _rest_guard_roundtrip(user, filter_ids):
+    from homeassistant.components.history import HistoryPeriodView
+    saved = HistoryPeriodView.get
+    seen = {}
+
+    async def fake_original(self, request, datetime=None):
+        seen["filter"] = request.query.get("filter_entity_id")
+        return ("DELEGATED", seen["filter"])
+
+    try:
+        HistoryPeriodView.get = fake_original
+        leak_guard.install_rest_history_guard()
+        guarded = HistoryPeriodView.get
+        return await guarded(_FakeView(), _FakeReq(user, filter_ids)), seen
+    finally:
+        HistoryPeriodView.get = saved
+
+
+async def test_rest_history_scoped_user_filtered():
+    u = _perm({"light.living"})
+    res, seen = await _rest_guard_roundtrip(u, "light.living,light.bedroom")
+    assert res[0] == "DELEGATED"
+    assert seen["filter"] == "light.living"  # bedroom pruned
+
+
+async def test_rest_history_scoped_user_none_permitted_returns_empty():
+    u = _perm({"light.living"})
+    res, seen = await _rest_guard_roundtrip(u, "light.bedroom,light.kitchen")
+    assert res == ("JSON", [])  # nothing permitted → [] , original not called
+    assert "filter" not in seen
+
+
+async def test_rest_history_admin_passthrough():
+    u = _user(groups=["system-admin"], is_admin=True)
+    res, seen = await _rest_guard_roundtrip(u, "light.bedroom")
+    assert res[0] == "DELEGATED" and seen["filter"] == "light.bedroom"
+
+
+def test_rest_history_guard_idempotent():
+    from homeassistant.components.history import HistoryPeriodView
+    saved = HistoryPeriodView.get
+    try:
+        leak_guard.install_rest_history_guard()
+        first = HistoryPeriodView.get
+        leak_guard.install_rest_history_guard()
+        assert HistoryPeriodView.get is first  # not double-wrapped
+    finally:
+        HistoryPeriodView.get = saved
