@@ -41,7 +41,6 @@ Two changes vs. the built-in version that lived in the fork:
 
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
 from typing import Any
@@ -152,30 +151,30 @@ def _migrate_v1_to_v2(state: dict[str, Any]) -> dict[str, Any]:
 LEGACY_STORAGE_KEY = "greenautarky_onboarding"
 
 
-def _migrate_legacy_storage_file(hass: HomeAssistant) -> bool:
-    """One-time move `.storage/greenautarky_onboarding` → `.storage/greenautarky_site`.
+async def _async_load_legacy_state(hass: HomeAssistant) -> dict[str, Any] | None:
+    """Load + REMOVE the pre-rename store. Returns its data, or None.
 
-    Runs in the executor BEFORE the Store is loaded. MOVES (not copies) so
-    there is exactly one source of truth afterwards — a stale copy under the
-    old key would be invisible to the component but still hold personal data
-    (sub-user names, consents), which the tenant-wipe must not miss.
-    The JSON envelope's ``key`` field is rewritten to match the new filename
-    (HA ignores a mismatch today, but the file should not lie about itself).
+    ⚠️ This deliberately goes through the Store API (async_load/async_remove),
+    NOT a filesystem move: HA's store manager caches the `.storage` directory
+    listing at boot, so a file created/moved behind its back is reported as
+    absent by a later ``Store.async_load`` — exactly how the first cut of this
+    migration silently produced an EMPTY state on K0 (2026-07-23) while the
+    unit test (which never called Store) stayed green. The legacy file was
+    present at boot, so loading it via Store is cache-coherent; async_remove
+    deletes it coherently too — one source of truth afterwards (a stale copy
+    would hold personal data the tenant-wipe could miss).
     """
-    old_path = Path(hass.config.path(".storage", LEGACY_STORAGE_KEY))
-    new_path = Path(hass.config.path(".storage", STORAGE_KEY))
-    if not old_path.is_file() or new_path.exists():
-        return False
-    try:
-        data = json.loads(old_path.read_text(encoding="utf-8"))
-        data["key"] = STORAGE_KEY
-        new_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-        old_path.unlink()
-    except (OSError, ValueError) as err:  # pragma: no cover - disk-level failure
-        _LOGGER.error("storage rename migration failed, keeping legacy file: %s", err)
-        return False
-    _LOGGER.info("storage migrated: .storage/%s -> .storage/%s", LEGACY_STORAGE_KEY, STORAGE_KEY)
-    return True
+    legacy_store: Store[dict[str, Any]] = _MigratableStore(
+        hass, STORAGE_VERSION, LEGACY_STORAGE_KEY
+    )
+    data = await legacy_store.async_load()
+    if data is None:
+        return None
+    await legacy_store.async_remove()
+    _LOGGER.info(
+        "storage migrated: .storage/%s -> .storage/%s", LEGACY_STORAGE_KEY, STORAGE_KEY
+    )
+    return data
 
 
 class _MigratableStore(Store):
@@ -207,15 +206,20 @@ async def _async_setup_common(hass: HomeAssistant) -> bool:
     if DOMAIN in hass.data:
         return True
 
-    # One-time file move from the pre-rename storage key (see
-    # _migrate_legacy_storage_file) — must happen BEFORE the Store loads.
-    await hass.async_add_executor_job(_migrate_legacy_storage_file, hass)
-
     # Use the migration-aware Store subclass — without it any state file
     # written by a prior version (v1) crashes setup with NotImplementedError
     # on the base _async_migrate_func. See _MigratableStore docstring.
     store: Store[dict[str, Any]] = _MigratableStore(hass, STORAGE_VERSION, STORAGE_KEY)
     state = await store.async_load()
+
+    if state is None:
+        # Rename migration (#574): nothing under the new key — adopt the
+        # pre-rename store's state if there is one (Store-API-coherent; see
+        # _async_load_legacy_state). The save immediately persists it under
+        # the new key so the next boot is a plain load.
+        state = await _async_load_legacy_state(hass)
+        if state is not None:
+            await store.async_save(state)
 
     # `loaded_from_storage` distinguishes a real GA-provisioned device from
     # an old / pre-existing one. See the `state is None` branch below.

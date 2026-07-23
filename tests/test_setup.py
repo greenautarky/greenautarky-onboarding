@@ -86,52 +86,76 @@ async def test_module_imports() -> None:
     ):
         importlib.import_module(mod_name)
 
+# ─── rename migration (#574): legacy storage key → greenautarky_site ──────
 
-async def test_legacy_storage_file_is_moved_on_setup(hass) -> None:
-    """Rename migration (#574): a device provisioned as `greenautarky_onboarding`
-    must carry its WHOLE household state over to the new key on first boot —
-    completed flag, consents, sub_users — and the old file must be GONE afterwards
-    (a stale copy would hold personal data the tenant-wipe can no longer see)."""
-    import json as _json
-    from pathlib import Path as _Path
 
-    from greenautarky_site import _migrate_legacy_storage_file
-    from greenautarky_site.const import STORAGE_KEY
+def _setup_patches():
+    from unittest.mock import patch
 
-    legacy = _Path(hass.config.path(".storage", "greenautarky_onboarding"))
-    new = _Path(hass.config.path(".storage", STORAGE_KEY))
-    legacy.parent.mkdir(parents=True, exist_ok=True)
-    # the hass fixture shares its config dir across tests — start clean
-    new.unlink(missing_ok=True)
-    legacy.unlink(missing_ok=True)
-    legacy.write_text(_json.dumps({
+    return (
+        patch("greenautarky_site._async_register_frontend_bundle", return_value=None),
+        patch("greenautarky_site._async_register_panel", return_value=None),
+        patch("greenautarky_site._register_redirect_js", return_value=None),
+        patch("greenautarky_site._patch_index_view_for_wizard_redirect", return_value=None),
+    )
+
+
+async def test_full_setup_adopts_legacy_storage(hass, hass_storage) -> None:
+    """THE regression test for the K0 2026-07-23 data-loss bug.
+
+    A device provisioned as `greenautarky_onboarding` must carry its WHOLE
+    household state (completed, consents, sub_users, sub_user_areas) to the new
+    key — via the real async_setup path AND through the Store API. The first
+    migration cut moved the file on the FILESYSTEM and its unit test passed,
+    but HA's store manager caches the .storage dir listing at boot, so
+    Store.async_load reported the moved file as absent → fresh default state →
+    sub-user maps silently lost on K0. Never bypass the Store API.
+    """
+    from unittest.mock import MagicMock
+
+    from greenautarky_site import async_setup
+    from greenautarky_site.const import DOMAIN, STORAGE_KEY
+
+    hass_storage["greenautarky_onboarding"] = {
         "version": 2, "minor_version": 1, "key": "greenautarky_onboarding",
-        "data": {"completed": True, "consents": {"gdpr": {"version": 1}},
-                 "sub_users": {"u9": {"parent": "m1"}}},
-    }))
+        "data": {"completed": True, "gdpr_accepted": True, "steps_done": ["pin"],
+                 "consents": {"gdpr": {"version": 1}},
+                 "sub_users": {"maxid": {"parent": "annaid"}},
+                 "sub_user_areas": {"maxid": ["wohnzimmer"]}},
+    }
 
-    assert await hass.async_add_executor_job(_migrate_legacy_storage_file, hass) is True
+    if not hasattr(hass, "http") or hass.http is None:
+        hass.http = MagicMock()
+    p1, p2, p3, p4 = _setup_patches()
+    with p1, p2, p3, p4:
+        assert await async_setup(hass, {DOMAIN: {}}) is True
+    await hass.async_block_till_done()
 
-    assert not legacy.exists()
-    stored = _json.loads(new.read_text())
-    assert stored["key"] == STORAGE_KEY
-    assert stored["data"]["completed"] is True
-    assert stored["data"]["sub_users"] == {"u9": {"parent": "m1"}}
+    state = hass.data[DOMAIN]["state"]
+    assert state.get("sub_users") == {"maxid": {"parent": "annaid"}}
+    assert state.get("sub_user_areas") == {"maxid": ["wohnzimmer"]}
+    assert state.get("completed") is True
+    assert state.get("consents", {}).get("gdpr", {}).get("version") == 1
+    # exactly one source of truth afterwards: new key persisted, legacy REMOVED
+    assert hass_storage[STORAGE_KEY]["data"]["sub_users"] == {"maxid": {"parent": "annaid"}}
+    assert "greenautarky_onboarding" not in hass_storage
 
-    # idempotent: second call is a no-op (new exists, old gone)
-    assert await hass.async_add_executor_job(_migrate_legacy_storage_file, hass) is False
 
+async def test_setup_without_legacy_storage_is_unchanged(hass, hass_storage) -> None:
+    """No legacy store → the pre-existing-device default branch as before."""
+    from unittest.mock import MagicMock
 
-async def test_no_legacy_file_migration_is_noop(hass) -> None:
-    """A fresh device (no legacy file) must not invent state."""
-    from pathlib import Path as _Path
+    from greenautarky_site import async_setup
+    from greenautarky_site.const import DOMAIN
 
-    from greenautarky_site import _migrate_legacy_storage_file
-    from greenautarky_site.const import STORAGE_KEY
+    hass_storage.pop("greenautarky_onboarding", None)
 
-    # the hass fixture shares its config dir across tests — start clean
-    for key in (STORAGE_KEY, "greenautarky_onboarding"):
-        _Path(hass.config.path(".storage", key)).unlink(missing_ok=True)
+    if not hasattr(hass, "http") or hass.http is None:
+        hass.http = MagicMock()
+    p1, p2, p3, p4 = _setup_patches()
+    with p1, p2, p3, p4:
+        assert await async_setup(hass, {DOMAIN: {}}) is True
 
-    assert await hass.async_add_executor_job(_migrate_legacy_storage_file, hass) is False
-    assert not _Path(hass.config.path(".storage", STORAGE_KEY)).exists()
+    state = hass.data[DOMAIN]["state"]
+    assert state.get("completed") is True  # pre-existing-device default
+    assert "sub_users" not in state
