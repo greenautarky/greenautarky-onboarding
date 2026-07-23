@@ -57,6 +57,10 @@ from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 
+from ..household.masters import _read_master_user_ids, _require_master
+from ..household.sub_users import _children_of
+from ..store import _get_state, _get_store
+
 _LOGGER = logging.getLogger(__name__)
 
 STRATEGY_TYPE = "custom:ga-home"
@@ -188,8 +192,6 @@ class GAMyRoomsView(HomeAssistantView):
     requires_auth = True
 
     async def get(self, request: web.Request) -> web.Response:
-        from .http import _get_state, _read_master_user_ids  # local: avoid a cycle
-
         hass: HomeAssistant = request.app["hass"]
         user = request["hass_user"]
         state = _get_state(hass)
@@ -307,8 +309,6 @@ class GAHomeModelView(HomeAssistantView):
     requires_auth = True
 
     async def get(self, request: web.Request) -> web.Response:
-        from .http import _get_state, _read_master_user_ids  # local: avoid a cycle
-
         hass: HomeAssistant = request.app["hass"]
         user = request["hass_user"]
         state = _get_state(hass)
@@ -337,8 +337,6 @@ class GASubUserAssignRoomView(HomeAssistantView):
     requires_auth = True
 
     async def post(self, request: web.Request) -> web.Response:
-        from .http import _children_of, _get_state, _get_store, _require_master
-
         hass: HomeAssistant = request.app["hass"]
         master, err = await _require_master(request)
         if err:
@@ -399,14 +397,12 @@ class GAEntityScopingView(HomeAssistantView):
 
     async def get(self, request: web.Request) -> web.Response:
         from . import entity_scope
-        from .http import _get_state
 
         hass: HomeAssistant = request.app["hass"]
         return self.json({"enabled": entity_scope.is_enabled(_get_state(hass))})
 
     async def post(self, request: web.Request) -> web.Response:
         from . import entity_scope
-        from .http import _get_state, _get_store
 
         hass: HomeAssistant = request.app["hass"]
         user = request["hass_user"]

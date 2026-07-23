@@ -16,15 +16,15 @@ import pytest
 from homeassistant.auth.const import GROUP_ID_ADMIN, GROUP_ID_USER
 
 from greenautarky_site.const import DOMAIN, MASTER_USERS_FILE
-from greenautarky_site.http import (
+from greenautarky_site.household import (
     GASubUserAssignDashboardView,
     GASubUserInviteView,
     GASubUserJoinView,
     GASubUserManageView,
     GASubUserRenameAreaView,
     GASubUserSetMasterView,
-    _read_master_user_ids,
 )
+from greenautarky_site.household.masters import _read_master_user_ids
 
 
 class _FakeStore:

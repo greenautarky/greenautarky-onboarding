@@ -43,15 +43,29 @@ from homeassistant.helpers.storage import Store
 from homeassistant.helpers.typing import ConfigType
 
 from .consent import async_check_and_create_issues
-from .const import DOMAIN, STORAGE_KEY, STORAGE_VERSION
-from .http import (
-    GAAdminBypassView,
+from .consent_views import (
     GAConsentAcceptView,
     GAConsentPageView,
     GAConsentStatusView,
-    GAConsoleLoginView,
-    GALedConfigView,
+)
+from .console_login import GAConsoleLoginView, _migrate_legacy_console_secret
+from .const import DOMAIN, STORAGE_KEY, STORAGE_VERSION
+from .household import (
     GAMasterConsolePageView,
+    GASubUserAssignDashboardView,
+    GASubUserInviteView,
+    GASubUserJoinPageView,
+    GASubUserJoinView,
+    GASubUserManageView,
+    GASubUserRemoveView,
+    GASubUserRenameAreaView,
+    GASubUserSetEnabledView,
+    GASubUserSetMasterView,
+    async_boot_register_personal_dashboards,
+)
+from .onboarding import (
+    GAAdminBypassView,
+    GALedConfigView,
     GAOnboardingCompleteView,
     GAOnboardingCreateUserView,
     GAOnboardingEthernetView,
@@ -64,27 +78,16 @@ from .http import (
     GAPasswordResetUsersView,
     GAPasswordResetView,
     GAPinVerifyView,
-    GASubUserAssignDashboardView,
-    GASubUserInviteView,
-    GASubUserJoinPageView,
-    GASubUserJoinView,
-    GASubUserManageView,
-    GASubUserRemoveView,
-    GASubUserRenameAreaView,
-    GASubUserSetEnabledView,
-    GASubUserSetMasterView,
-    _get_state,
-    _migrate_legacy_console_secret,
-    _migrate_legacy_pin,
-    async_boot_register_personal_dashboards,
 )
-from .rooms import (
+from .onboarding.pin import _migrate_legacy_pin
+from .scoping import (
     GAEntityScopingView,
     GAHomeModelView,
     GAMyRoomsView,
     GASubUserAssignRoomView,
     async_install_home_strategy,
 )
+from .store import _get_state
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -355,7 +358,7 @@ async def _async_setup_common(hass: HomeAssistant) -> bool:
         # Stage A: (re)apply per-user entity scopes from the room matrix. No-op
         # for real sub-users only (no-op without sub_users); self-heals any
         # leftover scope. Runs here so the entity/area registries + auth are up.
-        from . import entity_scope
+        from .scoping import entity_scope
 
         try:
             await entity_scope.async_reconcile_all(hass, _get_state(hass) or {})
@@ -366,7 +369,7 @@ async def _async_setup_common(hass: HomeAssistant) -> bool:
         # policy (history/logbook/registry-lists/render_template). Idempotent
         # and a pass-through for every non-scoped user, so it installs
         # unconditionally — it only ever restricts a genuinely scoped sub-user.
-        from . import leak_guard
+        from .scoping import leak_guard
 
         try:
             leak_guard.install(hass)

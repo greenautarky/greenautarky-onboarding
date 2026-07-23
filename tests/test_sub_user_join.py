@@ -22,13 +22,15 @@ from homeassistant.auth.const import GROUP_ID_ADMIN, GROUP_ID_USER
 from homeassistant.setup import async_setup_component
 
 from greenautarky_site.const import DOMAIN, MASTER_USERS_FILE
-from greenautarky_site.http import (
+from greenautarky_site.household import (
     GASubUserInviteView,
     GASubUserJoinView,
     GASubUserRemoveView,
     GASubUserSetEnabledView,
+)
+from greenautarky_site.household.masters import _read_master_user_ids
+from greenautarky_site.household.sub_users import (
     _hash_invite_pin,
-    _read_master_user_ids,
     _slugify_username,
 )
 

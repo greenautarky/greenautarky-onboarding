@@ -5,7 +5,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from greenautarky_site import leak_guard
+from greenautarky_site.scoping import leak_guard
 
 # ─── is_user_scoped gate ──────────────────────────────────────────────
 
@@ -20,7 +20,7 @@ def _user(groups=(), is_admin=False, is_owner=False):
 
 
 def test_is_user_scoped_true_only_with_scope_group():
-    from greenautarky_site.entity_scope import is_user_scoped
+    from greenautarky_site.scoping.entity_scope import is_user_scoped
     assert is_user_scoped(_user(groups=["ga_scope_abc"])) is True
     assert is_user_scoped(_user(groups=["system-users"])) is False
     assert is_user_scoped(_user(groups=[])) is False

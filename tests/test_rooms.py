@@ -12,9 +12,9 @@ import json
 from pathlib import Path
 from typing import Any, ClassVar
 
-from greenautarky_site import rooms
 from greenautarky_site.const import DOMAIN, MASTER_USERS_FILE
-from greenautarky_site.rooms import (
+from greenautarky_site.scoping import rooms
+from greenautarky_site.scoping.rooms import (
     SCOPE_ALL,
     SCOPE_ROOMS,
     STRATEGY_TYPE,

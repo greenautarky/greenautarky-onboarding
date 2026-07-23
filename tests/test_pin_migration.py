@@ -40,7 +40,7 @@ def fake_hass(tmp_path):
 
 def _migrate(hass):
     """Import inside the test so the fake hass is exercised."""
-    from greenautarky_site.http import _migrate_legacy_pin
+    from greenautarky_site.onboarding.pin import _migrate_legacy_pin
 
     return _migrate_legacy_pin(hass)
 
