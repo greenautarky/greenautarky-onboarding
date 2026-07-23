@@ -1,7 +1,7 @@
 # frontend.lock.yaml — provenance for the committed wizard bundle.
 #
 # The wizard bundle ships COMMITTED in
-# src/greenautarky_onboarding/frontend_bundle/ and is verified by content-hash
+# src/greenautarky_site/frontend_bundle/ and is verified by content-hash
 # (frontend_bundle/SHA256SUMS):
 #
 #   * The committed bytes are the source of truth. `scripts/build_bundle.sh

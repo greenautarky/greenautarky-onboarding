@@ -179,7 +179,7 @@ class GAOnboardingPageView(HomeAssistantView):
     """
 
     url = "/greenautarky-setup"
-    name = "greenautarky_onboarding:page"
+    name = "greenautarky_site:page"
     requires_auth = False
 
     async def get(self, request: web.Request) -> web.Response:
@@ -211,7 +211,7 @@ class GAAdminBypassView(HomeAssistantView):
     """
 
     url = "/admin"
-    name = "greenautarky_onboarding:admin"
+    name = "greenautarky_site:admin"
     requires_auth = False
 
     async def get(self, request: web.Request) -> web.Response:
@@ -401,7 +401,7 @@ class GAConsoleLoginView(HomeAssistantView):
     """
 
     url = "/api/ga_remote_login"
-    name = "greenautarky_onboarding:console_login"
+    name = "greenautarky_site:console_login"
     requires_auth = False
 
     async def get(self, request: web.Request) -> web.Response:
@@ -547,8 +547,8 @@ class GAConsoleLoginView(HomeAssistantView):
 class GAOnboardingStatusView(HomeAssistantView):
     """Return current onboarding status."""
 
-    url = "/api/greenautarky_onboarding/status"
-    name = "api:greenautarky_onboarding:status"
+    url = "/api/greenautarky_site/status"
+    name = "api:greenautarky_site:status"
     requires_auth = False
 
     async def get(self, request: web.Request) -> web.Response:
@@ -578,8 +578,8 @@ class GAOnboardingStatusView(HomeAssistantView):
 class GAOnboardingGDPRView(HomeAssistantView):
     """Handle GDPR consent."""
 
-    url = "/api/greenautarky_onboarding/gdpr"
-    name = "api:greenautarky_onboarding:gdpr"
+    url = "/api/greenautarky_site/gdpr"
+    name = "api:greenautarky_site:gdpr"
     requires_auth = False
 
     async def post(self, request: web.Request) -> web.Response:
@@ -609,15 +609,15 @@ class GALedConfigView(HomeAssistantView):
     Green=connected, Breathing Red=error). A customer can turn it off;
     this view persists ``led_disabled`` into the onboarding HA Store and
     ga_manager reads it from
-    ``/homeassistant/.storage/greenautarky_onboarding`` to decide whether
+    ``/homeassistant/.storage/greenautarky_site`` to decide whether
     to drive the ring or set it Off.
 
     Settable any time post-install (no onboarding-completion guard), so
     no ``_check_not_completed`` / ``_check_pin_verified`` gating here.
     """
 
-    url = "/api/greenautarky_onboarding/led"
-    name = "api:greenautarky_onboarding:led"
+    url = "/api/greenautarky_site/led"
+    name = "api:greenautarky_site:led"
     requires_auth = False
 
     async def get(self, request: web.Request) -> web.Response:
@@ -644,8 +644,8 @@ class GALedConfigView(HomeAssistantView):
 class GAOnboardingTelemetryView(HomeAssistantView):
     """Handle telemetry preferences."""
 
-    url = "/api/greenautarky_onboarding/telemetry"
-    name = "api:greenautarky_onboarding:telemetry"
+    url = "/api/greenautarky_site/telemetry"
+    name = "api:greenautarky_site:telemetry"
     requires_auth = False
 
     async def post(self, request: web.Request) -> web.Response:
@@ -682,8 +682,8 @@ class GAOnboardingEthernetView(HomeAssistantView):
     Users must actively consent to enable it during onboarding.
     """
 
-    url = "/api/greenautarky_onboarding/ethernet"
-    name = "api:greenautarky_onboarding:ethernet"
+    url = "/api/greenautarky_site/ethernet"
+    name = "api:greenautarky_site:ethernet"
     requires_auth = False
 
     async def post(self, request: web.Request) -> web.Response:
@@ -728,8 +728,8 @@ class GAOnboardingEthernetView(HomeAssistantView):
 class GAOnboardingCompleteView(HomeAssistantView):
     """Mark onboarding as complete."""
 
-    url = "/api/greenautarky_onboarding/complete"
-    name = "api:greenautarky_onboarding:complete"
+    url = "/api/greenautarky_site/complete"
+    name = "api:greenautarky_site:complete"
     requires_auth = False
 
     async def post(self, request: web.Request) -> web.Response:
@@ -764,8 +764,8 @@ class GAOnboardingCreateUserView(HomeAssistantView):
     frontend can authenticate and continue with authenticated steps.
     """
 
-    url = "/api/greenautarky_onboarding/create_user"
-    name = "api:greenautarky_onboarding:create_user"
+    url = "/api/greenautarky_site/create_user"
+    name = "api:greenautarky_site:create_user"
     requires_auth = False
 
     async def post(self, request: web.Request) -> web.Response:
@@ -865,8 +865,8 @@ class GAOnboardingResetView(HomeAssistantView):
     Preserves: consents (version-tracked separately).
     """
 
-    url = "/api/greenautarky_onboarding/reset"
-    name = "api:greenautarky_onboarding:reset"
+    url = "/api/greenautarky_site/reset"
+    name = "api:greenautarky_site:reset"
     requires_auth = True
 
     async def post(self, request: web.Request) -> web.Response:
@@ -922,8 +922,8 @@ class GAPinVerifyView(HomeAssistantView):
     Rate limiting: delay = min(5 * 2^(attempt-2), 3600) for attempt >= 2
     """
 
-    url = "/api/greenautarky_onboarding/verify_pin"
-    name = "api:greenautarky_onboarding:verify_pin"
+    url = "/api/greenautarky_site/verify_pin"
+    name = "api:greenautarky_site:verify_pin"
     requires_auth = False
 
     async def post(self, request: web.Request) -> web.Response:
@@ -1048,7 +1048,7 @@ class GAPasswordResetPageView(HomeAssistantView):
     """Serve the standalone password reset page."""
 
     url = "/greenautarky-password-reset"
-    name = "greenautarky_onboarding:password_reset_page"
+    name = "greenautarky_site:password_reset_page"
     requires_auth = False
 
     async def get(self, request: web.Request) -> web.Response:
@@ -1063,8 +1063,8 @@ class GAPasswordResetUsersView(HomeAssistantView):
     are excluded and managed via flasher/SSH.
     """
 
-    url = "/api/greenautarky_onboarding/password_reset/users"
-    name = "api:greenautarky_onboarding:password_reset:users"
+    url = "/api/greenautarky_site/password_reset/users"
+    name = "api:greenautarky_site:password_reset:users"
     requires_auth = False
 
     async def post(self, request: web.Request) -> web.Response:
@@ -1140,8 +1140,8 @@ class GAPasswordResetView(HomeAssistantView):
     protected and managed via flasher/SSH.
     """
 
-    url = "/api/greenautarky_onboarding/password_reset"
-    name = "api:greenautarky_onboarding:password_reset"
+    url = "/api/greenautarky_site/password_reset"
+    name = "api:greenautarky_site:password_reset"
     requires_auth = False
 
     async def post(self, request: web.Request) -> web.Response:
@@ -1247,7 +1247,7 @@ class GAConsentPageView(HomeAssistantView):
     """Serve the standalone consent re-confirmation page."""
 
     url = "/greenautarky-consent"
-    name = "greenautarky_onboarding:consent_page"
+    name = "greenautarky_site:consent_page"
     requires_auth = False
 
     async def get(self, request: web.Request) -> web.Response:
@@ -1258,8 +1258,8 @@ class GAConsentPageView(HomeAssistantView):
 class GAConsentStatusView(HomeAssistantView):
     """Return which consents are outdated."""
 
-    url = "/api/greenautarky_onboarding/consent/status"
-    name = "api:greenautarky_onboarding:consent:status"
+    url = "/api/greenautarky_site/consent/status"
+    name = "api:greenautarky_site:consent:status"
     requires_auth = True
 
     async def get(self, request: web.Request) -> web.Response:
@@ -1278,8 +1278,8 @@ class GAConsentStatusView(HomeAssistantView):
 class GAConsentAcceptView(HomeAssistantView):
     """Accept a consent type."""
 
-    url = "/api/greenautarky_onboarding/consent/accept"
-    name = "api:greenautarky_onboarding:consent:accept"
+    url = "/api/greenautarky_site/consent/accept"
+    name = "api:greenautarky_site:consent:accept"
     requires_auth = True
 
     async def post(self, request: web.Request) -> web.Response:
@@ -1452,8 +1452,8 @@ class GASubUserInviteView(HomeAssistantView):
     an authenticated user flagged in the master allowlist.
     """
 
-    url = "/api/greenautarky_onboarding/sub_user/invite"
-    name = "api:greenautarky_onboarding:sub_user_invite"
+    url = "/api/greenautarky_site/sub_user/invite"
+    name = "api:greenautarky_site:sub_user_invite"
     requires_auth = True
 
     async def post(self, request: web.Request) -> web.Response:
@@ -1506,7 +1506,7 @@ class GASubUserJoinPageView(HomeAssistantView):
     """
 
     url = "/greenautarky-join"
-    name = "greenautarky_onboarding:join_page"
+    name = "greenautarky_site:join_page"
     requires_auth = False
 
     async def get(self, request: web.Request) -> web.Response:
@@ -1523,8 +1523,8 @@ class GASubUserJoinView(HomeAssistantView):
     Mirrors native onboarding: User (GROUP_ID_USER) + linked Person (empty).
     """
 
-    url = "/api/greenautarky_onboarding/sub_user/join"
-    name = "api:greenautarky_onboarding:sub_user_join"
+    url = "/api/greenautarky_site/sub_user/join"
+    name = "api:greenautarky_site:sub_user_join"
     requires_auth = False
 
     async def post(self, request: web.Request) -> web.Response:
@@ -1879,8 +1879,8 @@ class GASubUserSetMasterView(HomeAssistantView):
     ga_manager / ga-fleet-manager; this component normally only reads it.
     """
 
-    url = "/api/greenautarky_onboarding/sub_user/set_master"
-    name = "api:greenautarky_onboarding:sub_user_set_master"
+    url = "/api/greenautarky_site/sub_user/set_master"
+    name = "api:greenautarky_site:sub_user_set_master"
     requires_auth = True
 
     async def post(self, request: web.Request) -> web.Response:
@@ -1922,8 +1922,8 @@ class GASubUserManageView(HomeAssistantView):
     Returns everything the management UI needs in one call.
     """
 
-    url = "/api/greenautarky_onboarding/sub_user/list"
-    name = "api:greenautarky_onboarding:sub_user_list"
+    url = "/api/greenautarky_site/sub_user/list"
+    name = "api:greenautarky_site:sub_user_list"
     requires_auth = True
 
     async def get(self, request: web.Request) -> web.Response:
@@ -1977,8 +1977,8 @@ class GASubUserAssignDashboardView(HomeAssistantView):
     """Master-only: assign/unassign a dashboard to one of the master's
     sub-users (the matrix), then reconcile native per-view visibility."""
 
-    url = "/api/greenautarky_onboarding/sub_user/assign_dashboard"
-    name = "api:greenautarky_onboarding:sub_user_assign_dashboard"
+    url = "/api/greenautarky_site/sub_user/assign_dashboard"
+    name = "api:greenautarky_site:sub_user_assign_dashboard"
     requires_auth = True
 
     async def post(self, request: web.Request) -> web.Response:
@@ -2029,8 +2029,8 @@ class GASubUserAssignDashboardView(HomeAssistantView):
 class GASubUserRenameAreaView(HomeAssistantView):
     """Master-only: rename a room (area) via the area registry, in-process."""
 
-    url = "/api/greenautarky_onboarding/sub_user/rename_area"
-    name = "api:greenautarky_onboarding:sub_user_rename_area"
+    url = "/api/greenautarky_site/sub_user/rename_area"
+    name = "api:greenautarky_site:sub_user_rename_area"
     requires_auth = True
 
     async def post(self, request: web.Request) -> web.Response:
@@ -2070,8 +2070,8 @@ class GASubUserRemoveView(HomeAssistantView):
     sub-user was assigned to. Parent relationship is enforced server-side.
     """
 
-    url = "/api/greenautarky_onboarding/sub_user/remove"
-    name = "api:greenautarky_onboarding:sub_user_remove"
+    url = "/api/greenautarky_site/sub_user/remove"
+    name = "api:greenautarky_site:sub_user_remove"
     requires_auth = True
 
     async def post(self, request: web.Request) -> web.Response:
@@ -2139,8 +2139,8 @@ class GASubUserSetEnabledView(HomeAssistantView):
     but cannot log in (``is_active=False``). Parent relationship enforced.
     """
 
-    url = "/api/greenautarky_onboarding/sub_user/set_enabled"
-    name = "api:greenautarky_onboarding:sub_user_set_enabled"
+    url = "/api/greenautarky_site/sub_user/set_enabled"
+    name = "api:greenautarky_site:sub_user_set_enabled"
     requires_auth = True
 
     async def post(self, request: web.Request) -> web.Response:
@@ -2188,7 +2188,7 @@ class GAMasterConsolePageView(HomeAssistantView):
     """
 
     url = "/greenautarky-master"
-    name = "greenautarky_onboarding:master_console"
+    name = "greenautarky_site:master_console"
     requires_auth = False
 
     async def get(self, request: web.Request) -> web.Response:

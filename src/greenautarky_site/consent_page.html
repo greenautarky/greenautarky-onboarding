@@ -84,7 +84,7 @@
 
   async function loadStatus() {
     try {
-      var resp = await fetch("/api/greenautarky_onboarding/consent/status");
+      var resp = await fetch("/api/greenautarky_site/consent/status");
       if (resp.status === 401) {
         content.innerHTML = '<p class="error">Du musst angemeldet sein, um diese Seite zu sehen. ' +
           '<a href="/">Zur Anmeldung</a></p>';
@@ -162,7 +162,7 @@
     if (btn) { btn.disabled = true; btn.textContent = "Wird gespeichert..."; }
 
     try {
-      var resp = await fetch("/api/greenautarky_onboarding/consent/accept", {
+      var resp = await fetch("/api/greenautarky_site/consent/accept", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ type: type }),

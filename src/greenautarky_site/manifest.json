@@ -1,5 +1,5 @@
 {
-  "domain": "greenautarky_onboarding",
+  "domain": "greenautarky_site",
   "name": "greenautarky Onboarding",
   "version": "1.9.0",
   "codeowners": [
@@ -15,6 +15,6 @@
     "greenautarky_telemetry",
     "frontend"
   ],
-  "documentation": "https://github.com/greenautarky/greenautarky-onboarding",
+  "documentation": "https://github.com/greenautarky/greenautarky-site",
   "iot_class": "local_polling"
 }

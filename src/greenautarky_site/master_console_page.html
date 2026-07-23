@@ -119,7 +119,7 @@
         tb.querySelectorAll('input[type=checkbox]').forEach(function (cb) {
           cb.addEventListener("change", async function () {
             try {
-              await api("/api/greenautarky_onboarding/sub_user/assign_dashboard", {
+              await api("/api/greenautarky_site/sub_user/assign_dashboard", {
                 method: "POST",
                 body: JSON.stringify({ sub_user_id: cb.dataset.uid,
                   url_path: cb.dataset.url, assigned: cb.checked }),
@@ -132,14 +132,14 @@
 
       async function load() {
         try {
-          var data = await api("/api/greenautarky_onboarding/sub_user/list");
+          var data = await api("/api/greenautarky_site/sub_user/list");
           state = data; render();
         } catch (e) { flash("err", e.message); }
       }
 
       document.getElementById("invite-btn").addEventListener("click", async function () {
         try {
-          var d = await api("/api/greenautarky_onboarding/sub_user/invite",
+          var d = await api("/api/greenautarky_site/sub_user/invite",
             { method: "POST", body: "{}" });
           document.getElementById("invite-out").innerHTML =
             'PIN: <code>' + d.pin + '</code> <span class="sub">(gültig bis ' +
@@ -152,7 +152,7 @@
         var name = document.getElementById("area-name").value.trim();
         if (!area_id || !name) { flash("err", "Raum + neuer Name nötig."); return; }
         try {
-          await api("/api/greenautarky_onboarding/sub_user/rename_area",
+          await api("/api/greenautarky_site/sub_user/rename_area",
             { method: "POST", body: JSON.stringify({ area_id: area_id, name: name }) });
           flash("ok", "Raum umbenannt.");
           document.getElementById("area-name").value = "";

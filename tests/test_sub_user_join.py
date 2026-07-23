@@ -21,8 +21,8 @@ import pytest
 from homeassistant.auth.const import GROUP_ID_ADMIN, GROUP_ID_USER
 from homeassistant.setup import async_setup_component
 
-from greenautarky_onboarding.const import DOMAIN, MASTER_USERS_FILE
-from greenautarky_onboarding.http import (
+from greenautarky_site.const import DOMAIN, MASTER_USERS_FILE
+from greenautarky_site.http import (
     GASubUserInviteView,
     GASubUserJoinView,
     GASubUserRemoveView,
@@ -295,7 +295,7 @@ async def test_join_records_consent(hass) -> None:
     """A successful join durably records who/when/what-version of the
     Datenschutz consent next to the parent bookkeeping (auditable, relocatable
     by the privacy review)."""
-    from greenautarky_onboarding.const import (
+    from greenautarky_site.const import (
         DATENSCHUTZ_URL,
         SUB_USER_CONSENT_VERSION,
     )

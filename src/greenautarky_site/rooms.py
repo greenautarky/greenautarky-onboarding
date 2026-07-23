@@ -183,8 +183,8 @@ async def async_install_home_strategy(hass: HomeAssistant) -> bool:
 class GAMyRoomsView(HomeAssistantView):
     """What the CALLING user may see, and why. The strategy renders from this."""
 
-    url = "/api/greenautarky_onboarding/my_rooms"
-    name = "api:greenautarky_onboarding:my_rooms"
+    url = "/api/greenautarky_site/my_rooms"
+    name = "api:greenautarky_site:my_rooms"
     requires_auth = True
 
     async def get(self, request: web.Request) -> web.Response:
@@ -302,8 +302,8 @@ class GAHomeModelView(HomeAssistantView):
     re-derives scope client-side (which broke for sub-users on null states).
     """
 
-    url = "/api/greenautarky_onboarding/home_model"
-    name = "api:greenautarky_onboarding:home_model"
+    url = "/api/greenautarky_site/home_model"
+    name = "api:greenautarky_site:home_model"
     requires_auth = True
 
     async def get(self, request: web.Request) -> web.Response:
@@ -332,8 +332,8 @@ class GAHomeModelView(HomeAssistantView):
 class GASubUserAssignRoomView(HomeAssistantView):
     """Master-only: grant/revoke ONE room for ONE of the master's OWN sub-users."""
 
-    url = "/api/greenautarky_onboarding/sub_user/assign_room"
-    name = "api:greenautarky_onboarding:sub_user_assign_room"
+    url = "/api/greenautarky_site/sub_user/assign_room"
+    name = "api:greenautarky_site:sub_user_assign_room"
     requires_auth = True
 
     async def post(self, request: web.Request) -> web.Response:
@@ -393,8 +393,8 @@ class GAEntityScopingView(HomeAssistantView):
     API, so it must be a deliberate per-device choice).
     """
 
-    url = "/api/greenautarky_onboarding/entity_scoping"
-    name = "api:greenautarky_onboarding:entity_scoping"
+    url = "/api/greenautarky_site/entity_scoping"
+    name = "api:greenautarky_site:entity_scoping"
     requires_auth = True
 
     async def get(self, request: web.Request) -> web.Response:

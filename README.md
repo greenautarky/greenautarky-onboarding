@@ -1,4 +1,4 @@
-# greenautarky-onboarding
+# greenautarky-site
 
 GreenAutarky tenant onboarding wizard for Home Assistant — PIN-gated setup
 flow, GDPR consent, password reset, signed-token operator auto-login,
@@ -7,7 +7,7 @@ default-panel hiding.
 Ships as a Home Assistant `custom_components/` integration. Designed to be
 installed via the OS image (`ha-operating-system` pulls a pinned version),
 but is also installable on stock Home Assistant by copying
-`src/greenautarky_onboarding/` to `<config>/custom_components/`.
+`src/greenautarky_site/` to `<config>/custom_components/`.
 
 ## What's in here
 
@@ -23,7 +23,7 @@ but is also installable on stock Home Assistant by copying
 ## Repository layout
 
 ```
-src/greenautarky_onboarding/
+src/greenautarky_site/
 ├── __init__.py              # async_setup_entry + IndexView patches
 ├── const.py                 # DOMAIN, STORAGE_KEY, PIN_FILE, ...
 ├── http.py                  # all HomeAssistantView classes (12 endpoints)
@@ -68,16 +68,16 @@ Bumping the OS version of the component is a one-line edit in
 
 ```yaml
 components:
-  greenautarky-onboarding: v1.0.0  # bump this
+  greenautarky-site: v1.0.0  # bump this
 ```
 
 ### Standalone on stock Home Assistant (dev / testing)
 
 ```bash
 cd /config
-git clone https://github.com/greenautarky/greenautarky-onboarding.git
-cp -r greenautarky-onboarding/src/greenautarky_onboarding custom_components/
-# Add `greenautarky_onboarding:` to configuration.yaml
+git clone https://github.com/greenautarky/greenautarky-site.git
+cp -r greenautarky-site/src/greenautarky_site custom_components/
+# Add `greenautarky_site:` to configuration.yaml
 # Restart HA
 ```
 

@@ -1,4 +1,4 @@
-"""Config flow for greenautarky_onboarding — single-entry, no user input.
+"""Config flow for greenautarky_site — single-entry, no user input.
 
 Variant B (config_flow pattern): an installer or HAOS overlay creates a
 config_entry in `.storage/core.config_entries` to trigger

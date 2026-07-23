@@ -1,4 +1,4 @@
-"""Shared pytest fixtures for greenautarky-onboarding tests.
+"""Shared pytest fixtures for greenautarky-site tests.
 
 Most tests need a hass instance that has our integration set up + a
 clean Store so they don't bleed state. The ``custom_integrations``
@@ -26,4 +26,4 @@ def integration_root() -> Path:
 
     Useful for tests that read the .html / .json files directly.
     """
-    return Path(__file__).resolve().parent.parent / "src" / "greenautarky_onboarding"
+    return Path(__file__).resolve().parent.parent / "src" / "greenautarky_site"

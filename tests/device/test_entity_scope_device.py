@@ -44,7 +44,7 @@ requires_device = pytest.mark.skipif(
 )
 
 CLIENT_ID = f"{DEVICE_URL}/" if DEVICE_URL else "http://device/"
-API = f"{DEVICE_URL}/api/greenautarky_onboarding"
+API = f"{DEVICE_URL}/api/greenautarky_site"
 
 
 async def _login(session, username: str, password: str) -> str:

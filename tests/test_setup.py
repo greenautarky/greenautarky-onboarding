@@ -26,7 +26,7 @@ async def test_async_setup_returns_true(hass) -> None:
     everything actually wired up". Wire-up tests need a richer
     fixture and live in test_setup_integration.py (TODO).
     """
-    from greenautarky_onboarding import async_setup
+    from greenautarky_site import async_setup
 
     # The default ``hass`` fixture builds a minimal HA instance without
     # the HTTP component. We inject a stub so the ``register_view``
@@ -36,23 +36,23 @@ async def test_async_setup_returns_true(hass) -> None:
 
     with (
         patch(
-            "greenautarky_onboarding._async_register_frontend_bundle",
+            "greenautarky_site._async_register_frontend_bundle",
             return_value=None,
         ),
         patch(
-            "greenautarky_onboarding._async_register_panel",
+            "greenautarky_site._async_register_panel",
             return_value=None,
         ),
         patch(
-            "greenautarky_onboarding._register_redirect_js",
+            "greenautarky_site._register_redirect_js",
             return_value=None,
         ),
         patch(
-            "greenautarky_onboarding._patch_index_view_for_wizard_redirect",
+            "greenautarky_site._patch_index_view_for_wizard_redirect",
             return_value=None,
         ),
     ):
-        ok = await async_setup(hass, {"greenautarky_onboarding": {}})
+        ok = await async_setup(hass, {"greenautarky_site": {}})
     assert ok is True
 
 
@@ -64,10 +64,60 @@ async def test_module_imports() -> None:
     import importlib
 
     for mod_name in (
-        "greenautarky_onboarding",
-        "greenautarky_onboarding.const",
-        "greenautarky_onboarding.consent",
-        "greenautarky_onboarding.http",
-        "greenautarky_onboarding.repairs",
+        "greenautarky_site",
+        "greenautarky_site.const",
+        "greenautarky_site.consent",
+        "greenautarky_site.http",
+        "greenautarky_site.repairs",
     ):
         importlib.import_module(mod_name)
+
+
+async def test_legacy_storage_file_is_moved_on_setup(hass) -> None:
+    """Rename migration (#574): a device provisioned as `greenautarky_onboarding`
+    must carry its WHOLE household state over to the new key on first boot —
+    completed flag, consents, sub_users — and the old file must be GONE afterwards
+    (a stale copy would hold personal data the tenant-wipe can no longer see)."""
+    import json as _json
+    from pathlib import Path as _Path
+
+    from greenautarky_site import _migrate_legacy_storage_file
+    from greenautarky_site.const import STORAGE_KEY
+
+    legacy = _Path(hass.config.path(".storage", "greenautarky_onboarding"))
+    new = _Path(hass.config.path(".storage", STORAGE_KEY))
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    # the hass fixture shares its config dir across tests — start clean
+    new.unlink(missing_ok=True)
+    legacy.unlink(missing_ok=True)
+    legacy.write_text(_json.dumps({
+        "version": 2, "minor_version": 1, "key": "greenautarky_onboarding",
+        "data": {"completed": True, "consents": {"gdpr": {"version": 1}},
+                 "sub_users": {"u9": {"parent": "m1"}}},
+    }))
+
+    assert await hass.async_add_executor_job(_migrate_legacy_storage_file, hass) is True
+
+    assert not legacy.exists()
+    stored = _json.loads(new.read_text())
+    assert stored["key"] == STORAGE_KEY
+    assert stored["data"]["completed"] is True
+    assert stored["data"]["sub_users"] == {"u9": {"parent": "m1"}}
+
+    # idempotent: second call is a no-op (new exists, old gone)
+    assert await hass.async_add_executor_job(_migrate_legacy_storage_file, hass) is False
+
+
+async def test_no_legacy_file_migration_is_noop(hass) -> None:
+    """A fresh device (no legacy file) must not invent state."""
+    from pathlib import Path as _Path
+
+    from greenautarky_site import _migrate_legacy_storage_file
+    from greenautarky_site.const import STORAGE_KEY
+
+    # the hass fixture shares its config dir across tests — start clean
+    for key in (STORAGE_KEY, "greenautarky_onboarding"):
+        _Path(hass.config.path(".storage", key)).unlink(missing_ok=True)
+
+    assert await hass.async_add_executor_job(_migrate_legacy_storage_file, hass) is False
+    assert not _Path(hass.config.path(".storage", STORAGE_KEY)).exists()

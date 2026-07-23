@@ -15,8 +15,8 @@ from typing import Any
 import pytest
 from homeassistant.auth.const import GROUP_ID_ADMIN, GROUP_ID_USER
 
-from greenautarky_onboarding.const import DOMAIN, MASTER_USERS_FILE
-from greenautarky_onboarding.http import (
+from greenautarky_site.const import DOMAIN, MASTER_USERS_FILE
+from greenautarky_site.http import (
     GASubUserAssignDashboardView,
     GASubUserInviteView,
     GASubUserJoinView,

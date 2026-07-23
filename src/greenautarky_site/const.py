@@ -1,7 +1,7 @@
 """Constants for greenautarky onboarding."""
 
-DOMAIN = "greenautarky_onboarding"
-STORAGE_KEY = "greenautarky_onboarding"
+DOMAIN = "greenautarky_site"
+STORAGE_KEY = "greenautarky_site"
 STORAGE_VERSION = 2
 
 # Steps in the onboarding wizard

@@ -26,6 +26,7 @@ Two changes vs. the built-in version that lived in the fork:
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 from typing import Any
@@ -87,19 +88,19 @@ from .rooms import (
 
 _LOGGER = logging.getLogger(__name__)
 
-URL_BASE = "/greenautarky_onboarding_static"
+URL_BASE = "/greenautarky_site_static"
 PANEL_URL_PATH = "greenautarky-setup-panel"
 
 # HA (2024.x+) quietly stops calling `async_setup` for a YAML-listed component
 # that doesn't declare a CONFIG_SCHEMA. ga_manager's converge enables this
-# integration by adding a bare `greenautarky_onboarding:` key to
+# integration by adding a bare `greenautarky_site:` key to
 # configuration.yaml, so we must accept the empty schema for that key to load
 # via YAML — otherwise the component would only ever come up via config_flow
 # (fragile on HA 2025.11.x). Same pattern as ga_frontend_bundle.
 CONFIG_SCHEMA = cv.empty_config_schema(DOMAIN)
 
 # URL of the client-side `/` → wizard redirect JS module (Finding 20 fix).
-REDIRECT_JS_URL = "/greenautarky_onboarding_redirect.js"
+REDIRECT_JS_URL = "/greenautarky_site_redirect.js"
 
 DEFAULT_STATE: dict[str, Any] = {
     "completed": False,
@@ -123,6 +124,40 @@ def _migrate_v1_to_v2(state: dict[str, Any]) -> dict[str, Any]:
             "accepted_at": "migrated-from-v1",
         }
     return state
+
+
+# The component was renamed greenautarky_onboarding → greenautarky_site
+# (Odoo #574). Devices provisioned before the rename carry their whole
+# household state (completed flag, consents, sub_users, sub_user_areas, …)
+# under the OLD storage key — without this one-time move every such device
+# would fall back into the onboarding wizard and lose its sub-user maps.
+LEGACY_STORAGE_KEY = "greenautarky_onboarding"
+
+
+def _migrate_legacy_storage_file(hass: HomeAssistant) -> bool:
+    """One-time move `.storage/greenautarky_onboarding` → `.storage/greenautarky_site`.
+
+    Runs in the executor BEFORE the Store is loaded. MOVES (not copies) so
+    there is exactly one source of truth afterwards — a stale copy under the
+    old key would be invisible to the component but still hold personal data
+    (sub-user names, consents), which the tenant-wipe must not miss.
+    The JSON envelope's ``key`` field is rewritten to match the new filename
+    (HA ignores a mismatch today, but the file should not lie about itself).
+    """
+    old_path = Path(hass.config.path(".storage", LEGACY_STORAGE_KEY))
+    new_path = Path(hass.config.path(".storage", STORAGE_KEY))
+    if not old_path.is_file() or new_path.exists():
+        return False
+    try:
+        data = json.loads(old_path.read_text(encoding="utf-8"))
+        data["key"] = STORAGE_KEY
+        new_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        old_path.unlink()
+    except (OSError, ValueError) as err:  # pragma: no cover - disk-level failure
+        _LOGGER.error("storage rename migration failed, keeping legacy file: %s", err)
+        return False
+    _LOGGER.info("storage migrated: .storage/%s -> .storage/%s", LEGACY_STORAGE_KEY, STORAGE_KEY)
+    return True
 
 
 class _MigratableStore(Store):
@@ -153,6 +188,10 @@ async def _async_setup_common(hass: HomeAssistant) -> bool:
     """
     if DOMAIN in hass.data:
         return True
+
+    # One-time file move from the pre-rename storage key (see
+    # _migrate_legacy_storage_file) — must happen BEFORE the Store loads.
+    await hass.async_add_executor_job(_migrate_legacy_storage_file, hass)
 
     # Use the migration-aware Store subclass — without it any state file
     # written by a prior version (v1) crashes setup with NotImplementedError
@@ -279,7 +318,7 @@ async def _async_setup_common(hass: HomeAssistant) -> bool:
     # the addons + settings only). The panels are still defined in HA Core
     # — they just don't appear in the sidebar (and the routes 404 from
     # the operator's perspective). Reversible without a redeploy: set
-    # `greenautarky_onboarding: hide_default_panels: false` (or unset) in
+    # `greenautarky_site: hide_default_panels: false` (or unset) in
     # configuration.yaml + restart Core to bring them back.
     #
     # Why here, not via a Lovelace strategy: panel visibility is a
@@ -352,7 +391,7 @@ async def _async_setup_common(hass: HomeAssistant) -> bool:
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Yaml-style setup (legacy / fallback path).
 
-    Lets `greenautarky_onboarding:` in configuration.yaml still work.
+    Lets `greenautarky_site:` in configuration.yaml still work.
     Modern install path uses config_entry → async_setup_entry.
     """
     return await _async_setup_common(hass)
@@ -494,7 +533,7 @@ def _hide_default_ha_panels(hass: HomeAssistant) -> None:
          ones do).
       2. Again on ``EVENT_HOMEASSISTANT_STARTED`` — covers stock integrations
          that register their panel later in startup (e.g. ``todo`` lands
-         alphabetically after ``greenautarky_onboarding`` and is registered
+         alphabetically after ``greenautarky_site`` and is registered
          in its own ``async_setup_entry``, so our early call would miss it).
     """
     def _remove_all() -> None:
@@ -598,7 +637,7 @@ def _patch_index_view_for_wizard_redirect(hass: HomeAssistant) -> None:
     IndexView.get = patched_get  # type: ignore[method-assign]
     IndexView._ga_wizard_patched = True  # type: ignore[attr-defined]
     _LOGGER.info(
-        "greenautarky_onboarding: patched IndexView.get to redirect `/` → "
+        "greenautarky_site: patched IndexView.get to redirect `/` → "
         "/greenautarky-setup.html while wizard is incomplete (server-side, "
         "fires before any HA JS bundle loads)"
     )

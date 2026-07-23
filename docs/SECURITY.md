@@ -1,4 +1,4 @@
-# Security model — greenautarky-onboarding
+# Security model — greenautarky-site
 
 ## Secret storage
 

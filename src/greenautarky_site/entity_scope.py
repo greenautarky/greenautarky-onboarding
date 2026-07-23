@@ -62,7 +62,7 @@ def is_enabled(state: dict[str, Any]) -> bool:
     without sub-users. Enabling by default is also the fail-CLOSED choice: a
     freshly-created sub-user sees nothing until the master grants rooms, instead
     of seeing the whole house until explicitly restricted. The admin toggle
-    (POST /api/greenautarky_onboarding/entity_scoping {enabled:false}) still
+    (POST /api/greenautarky_site/entity_scoping {enabled:false}) still
     turns it off explicitly; only an UNSET flag defaults to on.
     """
     return bool(state.get(STATE_ENABLED, True))

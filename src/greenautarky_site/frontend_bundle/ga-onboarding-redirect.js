@@ -25,7 +25,7 @@
   }
 
   try {
-    const resp = await fetch("/api/greenautarky_onboarding/status", {
+    const resp = await fetch("/api/greenautarky_site/status", {
       headers: { Accept: "application/json" },
       credentials: "same-origin",
     });
