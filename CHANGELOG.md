@@ -1,3 +1,19 @@
+## 1.9.0 — 2026-07-23
+- feat(scoping): server-side home model (Odoo #569). New
+  `GET /api/greenautarky_onboarding/home_model` computes the READY, already-
+  scoped, states-validated dashboard model with the server's full `hass` and
+  returns only entities the calling user can actually see — a live state AND
+  (for a scoped sub-user) `user.permissions.check_entity(read)`. The ga-home
+  strategy (ga-frontend-bundle 1.6.0) now renders straight from it instead of
+  re-deriving rooms/entities/scope in the browser from the device+entity
+  registries. That client re-derivation crashed for a room-scoped sub-user: the
+  leak-guard-filtered registry lists entities absent from the user's scoped
+  `hass.states` (e.g. a device `update.*` config entity) → a tile read
+  `hass.states[id]` = null → the whole board never rendered (K0, 2026-07-22).
+  Nothing null can now reach a card. The endpoint re-runs `async_scope_for` per
+  call and never trusts the client. Seam pinned from both ends (test_home_model_*
+  here + test_seam_*_read_verbatim in the bundle).
+
 ## 1.8.0 — 2026-07-21
 - change(privacy): entity scoping is now **default ON** (Odoo #516). It only
   ever restricts a real sub-user (reconcile iterates the sub_users map — empty
