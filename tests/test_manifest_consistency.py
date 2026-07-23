@@ -26,7 +26,7 @@ def test_manifest_matches_pyproject() -> None:
     py_version = m.group(1)
 
     mf = json.loads(
-        (root / "src" / "greenautarky_onboarding" / "manifest.json").read_text(
+        (root / "src" / "greenautarky_site" / "manifest.json").read_text(
             encoding="utf-8"
         )
     )

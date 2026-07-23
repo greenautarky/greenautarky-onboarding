@@ -106,7 +106,7 @@ async def test_invite_join_and_personal_dashboard(socket_enabled) -> None:
 
             # 1) master issues an invite PIN (API — the console UI wraps this)
             r = await api.post(
-                "/api/greenautarky_onboarding/sub_user/invite",
+                "/api/greenautarky_site/sub_user/invite",
                 headers=auth,
                 data={},
             )
@@ -164,7 +164,7 @@ async def test_invite_join_and_personal_dashboard(socket_enabled) -> None:
             sub = None
             for _ in range(10):
                 r = await api.get(
-                    "/api/greenautarky_onboarding/sub_user/list", headers=auth
+                    "/api/greenautarky_site/sub_user/list", headers=auth
                 )
                 assert r.ok, await r.text()
                 listing = await r.json()
@@ -187,7 +187,7 @@ async def test_invite_join_and_personal_dashboard(socket_enabled) -> None:
         finally:
             if sub_user_id:
                 await api.post(
-                    "/api/greenautarky_onboarding/sub_user/remove",
+                    "/api/greenautarky_site/sub_user/remove",
                     headers={"Authorization": f"Bearer {token}"},
                     data={"sub_user_id": sub_user_id},
                 )

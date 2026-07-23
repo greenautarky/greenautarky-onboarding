@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # build_bundle.sh — content-hashed producer for the onboarding wizard bundle.
 #
-# The wizard bundle ships COMMITTED in src/greenautarky_onboarding/frontend_bundle/
+# The wizard bundle ships COMMITTED in src/greenautarky_site/frontend_bundle/
 # and is verified by sha256 (frontend_bundle/SHA256SUMS). It is DECOUPLED from
 # the frontend build: the committed bytes are the source of truth and CI's
 # ci.yml/release.yml only re-verify their hashes offline (--check). Since
@@ -26,7 +26,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BUNDLE="${REPO_ROOT}/src/greenautarky_onboarding/frontend_bundle"
+BUNDLE="${REPO_ROOT}/src/greenautarky_site/frontend_bundle"
 SUMS="${BUNDLE}/SHA256SUMS"
 INFO="${BUNDLE}/BUILD-INFO.txt"
 LOCK="${REPO_ROOT}/frontend.lock.yaml"

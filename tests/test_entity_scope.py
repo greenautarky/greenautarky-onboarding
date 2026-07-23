@@ -20,8 +20,8 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from greenautarky_onboarding import entity_scope, rooms
-from greenautarky_onboarding.const import DOMAIN, MASTER_USERS_FILE
+from greenautarky_site.const import DOMAIN, MASTER_USERS_FILE
+from greenautarky_site.scoping import entity_scope, rooms
 
 READ, CONTROL = "read", "control"
 

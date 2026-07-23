@@ -8,7 +8,7 @@ same shape the frontend writes), load the app, and from the page's own JS
 
 * ``/api/states`` returns only the scoped set (fewer than the master sees);
 * reading a NON-scoped entity is 401;
-* ``/api/greenautarky_onboarding/my_rooms`` reports scope=rooms for him.
+* ``/api/greenautarky_site/my_rooms`` reports scope=rooms for him.
 
 Self-cleaning; CANARIES ONLY.
 
@@ -46,7 +46,7 @@ requires_device = pytest.mark.skipif(
 )
 
 CLIENT_ID = f"{DEVICE_URL}/" if DEVICE_URL else "http://device/"
-API = "/api/greenautarky_onboarding"
+API = "/api/greenautarky_site"
 
 
 async def _token(rc, username: str, password: str) -> str:

@@ -28,11 +28,11 @@ def patched_secret_paths(tmp_path, monkeypatch):
     legacy = tmp_path / "share" / "ga" / "console-login-secret"
     new = tmp_path / "config" / ".storage" / "greenautarky_secrets" / "console_login_secret"
     monkeypatch.setattr(
-        "greenautarky_onboarding.http.LEGACY_CONSOLE_LOGIN_SECRET_FILE",
+        "greenautarky_site.console_login.LEGACY_CONSOLE_LOGIN_SECRET_FILE",
         legacy,
     )
     monkeypatch.setattr(
-        "greenautarky_onboarding.http.CONSOLE_LOGIN_SECRET_FILE",
+        "greenautarky_site.console_login.CONSOLE_LOGIN_SECRET_FILE",
         new,
     )
     return legacy, new
@@ -40,7 +40,7 @@ def patched_secret_paths(tmp_path, monkeypatch):
 
 def _migrate():
     """Re-import inside the test so monkeypatched paths take effect."""
-    from greenautarky_onboarding.http import _migrate_legacy_console_secret
+    from greenautarky_site.console_login import _migrate_legacy_console_secret
 
     return _migrate_legacy_console_secret()
 

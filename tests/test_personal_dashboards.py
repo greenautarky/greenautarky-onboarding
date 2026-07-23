@@ -19,14 +19,14 @@ from homeassistant.auth.const import GROUP_ID_ADMIN, GROUP_ID_USER
 from homeassistant.components import frontend
 from homeassistant.components.lovelace.const import LOVELACE_DATA
 
-from greenautarky_onboarding import dashboards
-from greenautarky_onboarding.const import DOMAIN, MASTER_USERS_FILE
-from greenautarky_onboarding.http import (
-    GAOnboardingCreateUserView,
+from greenautarky_site import dashboards
+from greenautarky_site.const import DOMAIN, MASTER_USERS_FILE
+from greenautarky_site.household import (
     GASubUserInviteView,
     GASubUserJoinView,
     async_boot_register_personal_dashboards,
 )
+from greenautarky_site.onboarding import GAOnboardingCreateUserView
 
 pytestmark = pytest.mark.asyncio
 
@@ -322,7 +322,7 @@ async def test_boot_backfill_skips_admin_and_inactive(hass) -> None:
 async def test_remove_deletes_personal_dashboard(hass) -> None:
     """KB #149 §5a: the orphaned board survived removal and the visible-strip
     made it PUBLIC. Removal must delete panel + config + bookkeeping."""
-    from greenautarky_onboarding.http import GASubUserRemoveView
+    from greenautarky_site.household import GASubUserRemoveView
 
     _store, state = _seed(hass)
     _inject_lovelace(hass)

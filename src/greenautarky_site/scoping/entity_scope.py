@@ -46,6 +46,8 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 
+from .rooms import STATE_ROOMS
+
 _LOGGER = logging.getLogger(__name__)
 
 STATE_ENABLED = "entity_scoping_enabled"  # bool in the onboarding state
@@ -62,7 +64,7 @@ def is_enabled(state: dict[str, Any]) -> bool:
     without sub-users. Enabling by default is also the fail-CLOSED choice: a
     freshly-created sub-user sees nothing until the master grants rooms, instead
     of seeing the whole house until explicitly restricted. The admin toggle
-    (POST /api/greenautarky_onboarding/entity_scoping {enabled:false}) still
+    (POST /api/greenautarky_site/entity_scoping {enabled:false}) still
     turns it off explicitly; only an UNSET flag defaults to on.
     """
     return bool(state.get(STATE_ENABLED, True))
@@ -152,8 +154,6 @@ async def async_reconcile_user(hass: HomeAssistant, user_id: str, state: dict[st
     """Apply the current room assignment for one sub-user (call after assign /
     on start). Only real sub-users are scoped; if scoping is disabled this
     clears any leftover scope so nothing is silently restricted."""
-    from .rooms import STATE_ROOMS
-
     sub_users = state.get("sub_users") or {}
     if not is_enabled(state) or user_id not in sub_users:
         await async_clear(hass, user_id)
@@ -164,8 +164,6 @@ async def async_reconcile_user(hass: HomeAssistant, user_id: str, state: dict[st
 
 async def async_reconcile_all(hass: HomeAssistant, state: dict[str, Any]) -> None:
     """Reconcile every sub-user (startup + toggle). Clears all if disabled."""
-    from .rooms import STATE_ROOMS
-
     sub_users = state.get("sub_users") or {}
     matrix = state.get(STATE_ROOMS) or {}
     for user_id in set(sub_users) | set(matrix):

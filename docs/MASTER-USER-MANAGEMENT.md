@@ -14,7 +14,7 @@ The Master-User is a Home Assistant **Non-Admin** and only has the HA frontend
 So the privileged management actions must run **inside Core**, not in the
 `ga_manager` add-on.
 
-**This component (`greenautarky_onboarding`) is the in-Core proxy.** It already
+**This component (`greenautarky_site`) is the in-Core proxy.** It already
 runs in-process in Core, exposes authenticated HTTP/WS endpoints
 (see `http.py`, e.g. `create_user`) and persists state in `.storage` — the same
 pattern the Master plane needs.

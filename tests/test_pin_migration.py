@@ -40,7 +40,7 @@ def fake_hass(tmp_path):
 
 def _migrate(hass):
     """Import inside the test so the fake hass is exercised."""
-    from greenautarky_onboarding.http import _migrate_legacy_pin
+    from greenautarky_site.onboarding.pin import _migrate_legacy_pin
 
     return _migrate_legacy_pin(hass)
 
@@ -103,13 +103,13 @@ def test_migrate_creates_parent_dirs(fake_hass):
 
 def test_pin_file_path_uses_storage_location():
     """The v1.0.3+ `_pin_file_path` returns the .storage/ location."""
-    from greenautarky_onboarding.const import PIN_FILE
+    from greenautarky_site.const import PIN_FILE
 
     assert PIN_FILE == ".storage/greenautarky_secrets/onboarding_pin"
 
 
 def test_legacy_pin_file_path_still_top_level():
     """The legacy constant still points at the v1.0.0..1.0.2 path."""
-    from greenautarky_onboarding.const import PIN_FILE_LEGACY
+    from greenautarky_site.const import PIN_FILE_LEGACY
 
     assert PIN_FILE_LEGACY == "ga-onboarding-pin"

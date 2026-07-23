@@ -93,7 +93,7 @@ async def test_join_yields_personal_dashboard_live() -> None:
 
         # 1) master issues an invite PIN
         async with session.post(
-            f"{DEVICE_URL}/api/greenautarky_onboarding/sub_user/invite",
+            f"{DEVICE_URL}/api/greenautarky_site/sub_user/invite",
             headers=master_h,
             json={},
         ) as resp:
@@ -104,7 +104,7 @@ async def test_join_yields_personal_dashboard_live() -> None:
         try:
             # 2) sub-user joins (unauthenticated, PIN-gated)
             async with session.post(
-                f"{DEVICE_URL}/api/greenautarky_onboarding/sub_user/join",
+                f"{DEVICE_URL}/api/greenautarky_site/sub_user/join",
                 json={
                     "invite_pin": pin,
                     "name": sub_name,
@@ -117,7 +117,7 @@ async def test_join_yields_personal_dashboard_live() -> None:
             # 3) the master's manage surface lists the new sub-user WITH
             #    an auto-assigned ga-home-* dashboard (the feature under test)
             async with session.get(
-                f"{DEVICE_URL}/api/greenautarky_onboarding/sub_user/list",
+                f"{DEVICE_URL}/api/greenautarky_site/sub_user/list",
                 headers=master_h,
             ) as resp:
                 assert resp.status == 200, await resp.text()
@@ -142,7 +142,7 @@ async def test_join_yields_personal_dashboard_live() -> None:
             # cleanup: remove the throwaway sub-user (master-gated op)
             if sub_user_id:
                 await session.post(
-                    f"{DEVICE_URL}/api/greenautarky_onboarding/sub_user/remove",
+                    f"{DEVICE_URL}/api/greenautarky_site/sub_user/remove",
                     headers=master_h,
                     json={"sub_user_id": sub_user_id},
                 )

@@ -1,11 +1,26 @@
-"""Integration for greenautarky post-onboarding setup wizard.
+"""greenautarky_site — the deployment-site management plane.
 
-Phase 2 onboarding: the built frontend Lit panel is served at
-/greenautarky-setup.html (like stock onboarding.html). A sidebar panel
-is also registered so the wizard is accessible from the mobile app.
-Handles user account creation, GDPR consent, and analytics preferences.
+One GA device = one SITE (a home, an office, any installation). This
+component owns everything about that site and its people:
 
-After onboarding, manages consent re-confirmation via HA repairs system.
+* ``onboarding/`` — the one-shot setup wizard (PIN → GDPR → account →
+  telemetry → ethernet → complete) + PIN-gated password reset. The built
+  frontend Lit panel is served at /greenautarky-setup.html and registered
+  as a sidebar panel for the mobile app.
+* ``household/`` — the master user + the sub-users they invite
+  (invite/join/assign/remove lifecycle, dashboard assignment).
+* ``scoping/`` — the per-sub-user visibility boundary (room matrix →
+  native entity permissions [Stage A] + leak guard [Stage B]) and the
+  server-side home_model the ga-home dashboard strategy renders (#569).
+* consent re-confirmation via the HA repairs system, and the
+  fleet-manager's signed-token console login.
+
+This file is WIRING ONLY: storage load + migrations, view registration,
+panel/static/redirect registration, boot-deferred reconciles. Business
+logic lives in the packages above — see docs/ARCHITECTURE.md.
+
+Renamed from ``greenautarky_onboarding`` 2026-07-23 (Odoo #574): the
+component manages the whole site lifecycle, not just onboarding.
 
 This is the custom_component form of the integration. It used to live as a
 built-in component in our HA Core fork (greenautarky/ha-core branch
@@ -42,15 +57,29 @@ from homeassistant.helpers.storage import Store
 from homeassistant.helpers.typing import ConfigType
 
 from .consent import async_check_and_create_issues
-from .const import DOMAIN, STORAGE_KEY, STORAGE_VERSION
-from .http import (
-    GAAdminBypassView,
+from .consent_views import (
     GAConsentAcceptView,
     GAConsentPageView,
     GAConsentStatusView,
-    GAConsoleLoginView,
-    GALedConfigView,
+)
+from .console_login import GAConsoleLoginView, _migrate_legacy_console_secret
+from .const import DOMAIN, STORAGE_KEY, STORAGE_VERSION
+from .household import (
     GAMasterConsolePageView,
+    GASubUserAssignDashboardView,
+    GASubUserInviteView,
+    GASubUserJoinPageView,
+    GASubUserJoinView,
+    GASubUserManageView,
+    GASubUserRemoveView,
+    GASubUserRenameAreaView,
+    GASubUserSetEnabledView,
+    GASubUserSetMasterView,
+    async_boot_register_personal_dashboards,
+)
+from .onboarding import (
+    GAAdminBypassView,
+    GALedConfigView,
     GAOnboardingCompleteView,
     GAOnboardingCreateUserView,
     GAOnboardingEthernetView,
@@ -63,43 +92,32 @@ from .http import (
     GAPasswordResetUsersView,
     GAPasswordResetView,
     GAPinVerifyView,
-    GASubUserAssignDashboardView,
-    GASubUserInviteView,
-    GASubUserJoinPageView,
-    GASubUserJoinView,
-    GASubUserManageView,
-    GASubUserRemoveView,
-    GASubUserRenameAreaView,
-    GASubUserSetEnabledView,
-    GASubUserSetMasterView,
-    _get_state,
-    _migrate_legacy_console_secret,
-    _migrate_legacy_pin,
-    async_boot_register_personal_dashboards,
 )
-from .rooms import (
+from .onboarding.pin import _migrate_legacy_pin
+from .scoping import (
     GAEntityScopingView,
     GAHomeModelView,
     GAMyRoomsView,
     GASubUserAssignRoomView,
     async_install_home_strategy,
 )
+from .store import _get_state
 
 _LOGGER = logging.getLogger(__name__)
 
-URL_BASE = "/greenautarky_onboarding_static"
+URL_BASE = "/greenautarky_site_static"
 PANEL_URL_PATH = "greenautarky-setup-panel"
 
 # HA (2024.x+) quietly stops calling `async_setup` for a YAML-listed component
 # that doesn't declare a CONFIG_SCHEMA. ga_manager's converge enables this
-# integration by adding a bare `greenautarky_onboarding:` key to
+# integration by adding a bare `greenautarky_site:` key to
 # configuration.yaml, so we must accept the empty schema for that key to load
 # via YAML — otherwise the component would only ever come up via config_flow
 # (fragile on HA 2025.11.x). Same pattern as ga_frontend_bundle.
 CONFIG_SCHEMA = cv.empty_config_schema(DOMAIN)
 
 # URL of the client-side `/` → wizard redirect JS module (Finding 20 fix).
-REDIRECT_JS_URL = "/greenautarky_onboarding_redirect.js"
+REDIRECT_JS_URL = "/greenautarky_site_redirect.js"
 
 DEFAULT_STATE: dict[str, Any] = {
     "completed": False,
@@ -123,6 +141,40 @@ def _migrate_v1_to_v2(state: dict[str, Any]) -> dict[str, Any]:
             "accepted_at": "migrated-from-v1",
         }
     return state
+
+
+# The component was renamed greenautarky_onboarding → greenautarky_site
+# (Odoo #574). Devices provisioned before the rename carry their whole
+# household state (completed flag, consents, sub_users, sub_user_areas, …)
+# under the OLD storage key — without this one-time move every such device
+# would fall back into the onboarding wizard and lose its sub-user maps.
+LEGACY_STORAGE_KEY = "greenautarky_onboarding"
+
+
+async def _async_load_legacy_state(hass: HomeAssistant) -> dict[str, Any] | None:
+    """Load + REMOVE the pre-rename store. Returns its data, or None.
+
+    ⚠️ This deliberately goes through the Store API (async_load/async_remove),
+    NOT a filesystem move: HA's store manager caches the `.storage` directory
+    listing at boot, so a file created/moved behind its back is reported as
+    absent by a later ``Store.async_load`` — exactly how the first cut of this
+    migration silently produced an EMPTY state on K0 (2026-07-23) while the
+    unit test (which never called Store) stayed green. The legacy file was
+    present at boot, so loading it via Store is cache-coherent; async_remove
+    deletes it coherently too — one source of truth afterwards (a stale copy
+    would hold personal data the tenant-wipe could miss).
+    """
+    legacy_store: Store[dict[str, Any]] = _MigratableStore(
+        hass, STORAGE_VERSION, LEGACY_STORAGE_KEY
+    )
+    data = await legacy_store.async_load()
+    if data is None:
+        return None
+    await legacy_store.async_remove()
+    _LOGGER.info(
+        "storage migrated: .storage/%s -> .storage/%s", LEGACY_STORAGE_KEY, STORAGE_KEY
+    )
+    return data
 
 
 class _MigratableStore(Store):
@@ -159,6 +211,15 @@ async def _async_setup_common(hass: HomeAssistant) -> bool:
     # on the base _async_migrate_func. See _MigratableStore docstring.
     store: Store[dict[str, Any]] = _MigratableStore(hass, STORAGE_VERSION, STORAGE_KEY)
     state = await store.async_load()
+
+    if state is None:
+        # Rename migration (#574): nothing under the new key — adopt the
+        # pre-rename store's state if there is one (Store-API-coherent; see
+        # _async_load_legacy_state). The save immediately persists it under
+        # the new key so the next boot is a plain load.
+        state = await _async_load_legacy_state(hass)
+        if state is not None:
+            await store.async_save(state)
 
     # `loaded_from_storage` distinguishes a real GA-provisioned device from
     # an old / pre-existing one. See the `state is None` branch below.
@@ -279,7 +340,7 @@ async def _async_setup_common(hass: HomeAssistant) -> bool:
     # the addons + settings only). The panels are still defined in HA Core
     # — they just don't appear in the sidebar (and the routes 404 from
     # the operator's perspective). Reversible without a redeploy: set
-    # `greenautarky_onboarding: hide_default_panels: false` (or unset) in
+    # `greenautarky_site: hide_default_panels: false` (or unset) in
     # configuration.yaml + restart Core to bring them back.
     #
     # Why here, not via a Lovelace strategy: panel visibility is a
@@ -316,7 +377,7 @@ async def _async_setup_common(hass: HomeAssistant) -> bool:
         # Stage A: (re)apply per-user entity scopes from the room matrix. No-op
         # for real sub-users only (no-op without sub_users); self-heals any
         # leftover scope. Runs here so the entity/area registries + auth are up.
-        from . import entity_scope
+        from .scoping import entity_scope
 
         try:
             await entity_scope.async_reconcile_all(hass, _get_state(hass) or {})
@@ -327,7 +388,7 @@ async def _async_setup_common(hass: HomeAssistant) -> bool:
         # policy (history/logbook/registry-lists/render_template). Idempotent
         # and a pass-through for every non-scoped user, so it installs
         # unconditionally — it only ever restricts a genuinely scoped sub-user.
-        from . import leak_guard
+        from .scoping import leak_guard
 
         try:
             leak_guard.install(hass)
@@ -352,7 +413,7 @@ async def _async_setup_common(hass: HomeAssistant) -> bool:
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Yaml-style setup (legacy / fallback path).
 
-    Lets `greenautarky_onboarding:` in configuration.yaml still work.
+    Lets `greenautarky_site:` in configuration.yaml still work.
     Modern install path uses config_entry → async_setup_entry.
     """
     return await _async_setup_common(hass)
@@ -494,7 +555,7 @@ def _hide_default_ha_panels(hass: HomeAssistant) -> None:
          ones do).
       2. Again on ``EVENT_HOMEASSISTANT_STARTED`` — covers stock integrations
          that register their panel later in startup (e.g. ``todo`` lands
-         alphabetically after ``greenautarky_onboarding`` and is registered
+         alphabetically after ``greenautarky_site`` and is registered
          in its own ``async_setup_entry``, so our early call would miss it).
     """
     def _remove_all() -> None:
@@ -598,7 +659,7 @@ def _patch_index_view_for_wizard_redirect(hass: HomeAssistant) -> None:
     IndexView.get = patched_get  # type: ignore[method-assign]
     IndexView._ga_wizard_patched = True  # type: ignore[attr-defined]
     _LOGGER.info(
-        "greenautarky_onboarding: patched IndexView.get to redirect `/` → "
+        "greenautarky_site: patched IndexView.get to redirect `/` → "
         "/greenautarky-setup.html while wizard is incomplete (server-side, "
         "fires before any HA JS bundle loads)"
     )
