@@ -1,3 +1,33 @@
+## 2.0.0 — 2026-07-23
+- **feat!(rename): `greenautarky_onboarding` → `greenautarky_site`** (Odoo
+  #574). The component is the deployment-SITE management plane (setup wizard +
+  master/sub-users + room scoping + home_model) for homes AND offices — "site"
+  is the einsatzneutral term. DOMAIN, `/api/greenautarky_site/*`,
+  `.storage/greenautarky_site`, static prefix and the OCI artifact
+  (`ghcr.io/greenautarky/greenautarky-site`) all renamed. **CLEAN BREAK — no
+  alias routes** (canary-ring decision): callers (ga-frontend-bundle,
+  ga_manager, fleet-manager `GA_COMPONENTS`, OS bake `version.yaml` + e2e
+  suites, wizard frontend source) move in the same rollout wave.
+  `/api/ga_remote_login` and the HTML page paths are unchanged.
+- **One-time storage migration**: `.storage/greenautarky_onboarding` is MOVED
+  to `.storage/greenautarky_site` on first boot (envelope key rewritten, old
+  file deleted — one source of truth; a stale copy would hold personal data
+  the tenant-wipe could miss). Without it a provisioned device would re-enter
+  the wizard and lose its sub-user maps.
+- **refactor(structure): the 2243-line `http.py` monolith is gone.** New
+  layout: `onboarding/` (wizard, pin, password_reset) · `household/` (masters,
+  sub_users, dashboards_admin) · `scoping/` (rooms, entity_scope, leak_guard)
+  · `store.py` · `console_login.py` · `consent_views.py`. Pure code moves
+  (AST-verified identical bodies); the old http↔rooms import cycle is
+  structurally gone (shared accessors live in `store.py`/`household.masters`).
+- **docs**: new `docs/ARCHITECTURE.md` (the plane's map, request→scope→model
+  flow, seams table) + `docs/API.md` (every endpoint: method, auth, payload —
+  AST-extracted from code truth); README layout + SECURITY refs updated; the
+  root docstring now describes the site plane.
+- Wizard frontend bundle: hardcoded `/api` + static path literals renamed in
+  the built JS, SHA256SUMS regenerated (1085 files). The bundle SOURCE
+  (frontend fork) needs the same rename before the next rebuild — BUILD.md.
+
 ## 1.9.0 — 2026-07-23
 - feat(scoping): server-side home model (Odoo #569). New
   `GET /api/greenautarky_onboarding/home_model` computes the READY, already-

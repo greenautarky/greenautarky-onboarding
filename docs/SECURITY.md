@@ -14,7 +14,7 @@ container — addons cannot reach it.
 
 ### Migration (= 1.0.1+ first-boot behaviour)
 
-`_migrate_legacy_console_secret()` in `http.py` runs once at integration
+`_migrate_legacy_console_secret()` in `console_login.py` runs once at integration
 setup:
 
 1. If the new path exists → no-op (already migrated, or a fresh device
@@ -29,7 +29,7 @@ Idempotent. Safe to run on every boot.
 
 ## Admin protection
 
-`GAPasswordResetUsersView.post()` (in `http.py:864`) explicitly
+`GAPasswordResetUsersView.post()` (in `onboarding/password_reset.py`) explicitly
 filters out admin users:
 
 ```python

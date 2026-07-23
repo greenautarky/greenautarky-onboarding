@@ -1,11 +1,26 @@
-"""Integration for greenautarky post-onboarding setup wizard.
+"""greenautarky_site — the deployment-site management plane.
 
-Phase 2 onboarding: the built frontend Lit panel is served at
-/greenautarky-setup.html (like stock onboarding.html). A sidebar panel
-is also registered so the wizard is accessible from the mobile app.
-Handles user account creation, GDPR consent, and analytics preferences.
+One GA device = one SITE (a home, an office, any installation). This
+component owns everything about that site and its people:
 
-After onboarding, manages consent re-confirmation via HA repairs system.
+* ``onboarding/`` — the one-shot setup wizard (PIN → GDPR → account →
+  telemetry → ethernet → complete) + PIN-gated password reset. The built
+  frontend Lit panel is served at /greenautarky-setup.html and registered
+  as a sidebar panel for the mobile app.
+* ``household/`` — the master user + the sub-users they invite
+  (invite/join/assign/remove lifecycle, dashboard assignment).
+* ``scoping/`` — the per-sub-user visibility boundary (room matrix →
+  native entity permissions [Stage A] + leak guard [Stage B]) and the
+  server-side home_model the ga-home dashboard strategy renders (#569).
+* consent re-confirmation via the HA repairs system, and the
+  fleet-manager's signed-token console login.
+
+This file is WIRING ONLY: storage load + migrations, view registration,
+panel/static/redirect registration, boot-deferred reconciles. Business
+logic lives in the packages above — see docs/ARCHITECTURE.md.
+
+Renamed from ``greenautarky_onboarding`` 2026-07-23 (Odoo #574): the
+component manages the whole site lifecycle, not just onboarding.
 
 This is the custom_component form of the integration. It used to live as a
 built-in component in our HA Core fork (greenautarky/ha-core branch

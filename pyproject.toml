@@ -1,6 +1,6 @@
 [project]
 name = "greenautarky-site"
-version = "1.9.0"
+version = "2.0.0"
 description = "GreenAutarky tenant onboarding wizard for Home Assistant — PIN-gated setup flow, GDPR consent, password reset, signed-token operator auto-login"
 authors = [{name = "Thomas Taube", email = "thomas@greenautarky.com"}]
 license = {text = "Proprietary"}
