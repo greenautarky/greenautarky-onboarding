@@ -54,6 +54,8 @@ from aiohttp import web
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import area_registry as ar
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -202,6 +204,127 @@ class GAMyRoomsView(HomeAssistantView):
                 "areas": areas,
                 "areas_exist": bool(_areas(hass)),
                 "is_master": reason == "master",
+            }
+        )
+
+
+def _build_home_model(
+    hass: HomeAssistant, user: Any, scope: str, areas: list[dict[str, str]]
+) -> dict[str, Any]:
+    """Compute the READY, already-scoped, states-validated home model.
+
+    The ga-home strategy used to re-derive all of this in the browser from the
+    device/entity registries and re-apply scope client-side. For a room-scoped
+    sub-user that broke: the leak-guard-filtered registry lists entities absent
+    from that user's scoped ``hass.states`` (e.g. a device ``update.*`` config
+    entity) and a tile then read ``hass.states[id]`` = null → the whole board
+    crashed (K0, 2026-07-22). We compute it HERE with the server's full ``hass``
+    but return ONLY entities the calling user can actually see, so nothing null
+    ever reaches the client and the strategy is pure presentation.
+
+    An entity is included iff it (a) is not hidden/disabled, (b) is a LIVE state,
+    and (c) for a scoped sub-user, passes the SAME entity read-permission HA uses
+    (``user.permissions.check_entity``) — so the model matches the user's own
+    state machine exactly. Admin/master/tenant (scope != rooms) see everything.
+    """
+    ent_reg = er.async_get(hass)
+    dev_reg = dr.async_get(hass)
+    allowed = {a["area_id"] for a in areas}
+    area_name = {a["area_id"]: a["name"] for a in areas}
+    perms = getattr(user, "permissions", None)
+    scoped = scope == SCOPE_ROOMS
+
+    def can_see(entity_id: str) -> bool:
+        if hass.states.get(entity_id) is None:  # not a live state → never render
+            return False
+        if scoped and perms is not None:
+            return bool(perms.check_entity(entity_id, "read"))
+        return True
+
+    def area_of(entry: Any) -> str | None:
+        if entry.area_id:
+            return entry.area_id
+        dev = dev_reg.async_get(entry.device_id) if entry.device_id else None
+        return dev.area_id if dev else None
+
+    per_area: dict[str, list[Any]] = {}
+    roomless: list[Any] = []
+    for entry in ent_reg.entities.values():
+        if entry.hidden_by or entry.disabled_by or not can_see(entry.entity_id):
+            continue
+        aid = area_of(entry)
+        if aid and aid in allowed:
+            per_area.setdefault(aid, []).append(entry)
+        elif not aid and not scoped:  # roomless entities only for a house-wide user
+            roomless.append(entry)
+
+    def device_class(entity_id: str) -> str | None:
+        st = hass.states.get(entity_id)
+        return st.attributes.get("device_class") if st else None
+
+    def classify(entries: list[Any]) -> dict[str, list[str]]:
+        # entity_category is None == resident-facing control; config/diagnostic are
+        # knobs/telemetry the resident does not operate (matches the old strategy).
+        primary = [e for e in entries if e.entity_category is None]
+
+        def dom(items: list[Any], d: str) -> list[str]:
+            return [e.entity_id for e in items if e.entity_id.startswith(d + ".")]
+
+        def sensors(items: list[Any], dc: str) -> list[str]:
+            return [e.entity_id for e in items if device_class(e.entity_id) == dc]
+
+        return {
+            "climate": dom(primary, "climate"),  # strategy collapses coupled TRVs
+            "lights": dom(primary, "light"),
+            "switches": dom(primary, "switch"),
+            "temps": sensors(primary, "temperature"),
+            "hums": sensors(primary, "humidity"),
+            "batts": sensors(entries, "battery"),  # battery is diagnostic → all entries
+        }
+
+    rooms: list[dict[str, Any]] = []
+    for aid in sorted(per_area, key=lambda a: area_name.get(a, "")):
+        cats = classify(per_area[aid])
+        if not any(cats.values()):
+            continue  # an empty room is noise
+        rooms.append({"area_id": aid, "name": area_name.get(aid, aid), **cats})
+
+    out: dict[str, Any] = {"rooms": rooms}
+    if roomless:
+        out["roomless"] = classify(roomless)
+    return out
+
+
+class GAHomeModelView(HomeAssistantView):
+    """The READY scoped home model — the ga-home strategy renders straight from it.
+
+    Server-computed so the strategy never touches the device/entity registries or
+    re-derives scope client-side (which broke for sub-users on null states).
+    """
+
+    url = "/api/greenautarky_onboarding/home_model"
+    name = "api:greenautarky_onboarding:home_model"
+    requires_auth = True
+
+    async def get(self, request: web.Request) -> web.Response:
+        from .http import _get_state, _read_master_user_ids  # local: avoid a cycle
+
+        hass: HomeAssistant = request.app["hass"]
+        user = request["hass_user"]
+        state = _get_state(hass)
+        masters = await hass.async_add_executor_job(_read_master_user_ids, hass)
+        sub_users = state.get("sub_users") or {}
+
+        scope, reason, areas = await async_scope_for(hass, user, state, masters, sub_users)
+        model = _build_home_model(hass, user, scope, areas)
+        return self.json(
+            {
+                "scope": scope,
+                "reason": reason,
+                "is_master": reason == "master",
+                "user_name": getattr(user, "name", "") or "",
+                "areas_exist": bool(_areas(hass)),
+                **model,
             }
         )
 

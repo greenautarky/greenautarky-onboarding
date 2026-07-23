@@ -283,3 +283,55 @@ async def test_hand_made_default_dashboard_is_never_clobbered(hass) -> None:
     assert await async_install_home_strategy(hass) is False
     assert dash.saved is None
     assert dash.config["views"][0]["title"] == "Meins"
+
+
+# ─── server-side home model (#569) ─────────────────────────────────────────
+
+
+async def test_home_model_excludes_stateless_and_config_entities(hass) -> None:
+    """The root cause of the sub-user board crash: the registry lists entities
+    absent from the user's scoped states (a device `update.*` config entity).
+    The model must only carry entities that (a) have a live state and (b) are
+    resident-facing — so the strategy never renders a card for a null entity."""
+    from homeassistant.helpers import entity_registry as er
+    from homeassistant.const import EntityCategory
+
+    area = await _area(hass, "Wohnzimmer")
+    reg = er.async_get(hass)
+
+    # a resident-facing climate + a temperature sensor (both live)
+    reg.async_get_or_create("climate", "test", "trv1", suggested_object_id="wohnzimmer_trv")
+    reg.async_update_entity("climate.wohnzimmer_trv", area_id=area.id)
+    hass.states.async_set("climate.wohnzimmer_trv", "heat", {})
+    reg.async_get_or_create("sensor", "test", "temp1", suggested_object_id="wohnzimmer_temp")
+    reg.async_update_entity("sensor.wohnzimmer_temp", area_id=area.id)
+    hass.states.async_set("sensor.wohnzimmer_temp", "21.0", {"device_class": "temperature"})
+
+    # a firmware-update config entity in the SAME room but WITHOUT a live state
+    # (this is exactly what crashed the client: listed by the registry, null in
+    # the scoped user's states).
+    reg.async_get_or_create(
+        "update", "test", "fw1", suggested_object_id="wohnzimmer_fw",
+        entity_category=EntityCategory.CONFIG,
+    )
+    reg.async_update_entity("update.wohnzimmer_fw", area_id=area.id)
+    # deliberately DO NOT set a state for update.wohnzimmer_fw
+
+    areas = [{"area_id": area.id, "name": "Wohnzimmer"}]
+    model = rooms._build_home_model(hass, _User("u1"), SCOPE_ALL, areas)
+
+    assert len(model["rooms"]) == 1
+    room = model["rooms"][0]
+    assert room["climate"] == ["climate.wohnzimmer_trv"]
+    assert room["temps"] == ["sensor.wohnzimmer_temp"]
+    # the stateless config entity is NOWHERE in the model
+    blob = json.dumps(model)
+    assert "update.wohnzimmer_fw" not in blob
+
+
+async def test_home_model_drops_empty_rooms(hass) -> None:
+    """A room with no renderable entity is noise — omitted."""
+    area = await _area(hass, "Leerraum")
+    areas = [{"area_id": area.id, "name": "Leerraum"}]
+    model = rooms._build_home_model(hass, _User("u1"), SCOPE_ALL, areas)
+    assert model["rooms"] == []
