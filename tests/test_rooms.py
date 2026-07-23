@@ -283,3 +283,113 @@ async def test_hand_made_default_dashboard_is_never_clobbered(hass) -> None:
     assert await async_install_home_strategy(hass) is False
     assert dash.saved is None
     assert dash.config["views"][0]["title"] == "Meins"
+
+
+# ─── server-side home model (#569) ─────────────────────────────────────────
+
+
+async def test_home_model_excludes_stateless_and_config_entities(hass) -> None:
+    """The root cause of the sub-user board crash: the registry lists entities
+    absent from the user's scoped states (a device `update.*` config entity).
+    The model must only carry entities that (a) have a live state and (b) are
+    resident-facing — so the strategy never renders a card for a null entity."""
+    from homeassistant.const import EntityCategory
+    from homeassistant.helpers import entity_registry as er
+
+    area = await _area(hass, "Wohnzimmer")
+    reg = er.async_get(hass)
+
+    # a resident-facing climate + a temperature sensor (both live)
+    reg.async_get_or_create("climate", "test", "trv1", suggested_object_id="wohnzimmer_trv")
+    reg.async_update_entity("climate.wohnzimmer_trv", area_id=area.id)
+    hass.states.async_set("climate.wohnzimmer_trv", "heat", {})
+    reg.async_get_or_create("sensor", "test", "temp1", suggested_object_id="wohnzimmer_temp")
+    reg.async_update_entity("sensor.wohnzimmer_temp", area_id=area.id)
+    hass.states.async_set("sensor.wohnzimmer_temp", "21.0", {"device_class": "temperature"})
+
+    # a firmware-update config entity in the SAME room but WITHOUT a live state
+    # (this is exactly what crashed the client: listed by the registry, null in
+    # the scoped user's states).
+    reg.async_get_or_create(
+        "update", "test", "fw1", suggested_object_id="wohnzimmer_fw",
+        entity_category=EntityCategory.CONFIG,
+    )
+    reg.async_update_entity("update.wohnzimmer_fw", area_id=area.id)
+    # deliberately DO NOT set a state for update.wohnzimmer_fw
+
+    areas = [{"area_id": area.id, "name": "Wohnzimmer"}]
+    model = rooms._build_home_model(hass, _User("u1"), SCOPE_ALL, areas)
+
+    assert len(model["rooms"]) == 1
+    room = model["rooms"][0]
+    assert room["climate"] == ["climate.wohnzimmer_trv"]
+    assert room["temps"] == ["sensor.wohnzimmer_temp"]
+    # the stateless config entity is NOWHERE in the model
+    blob = json.dumps(model)
+    assert "update.wohnzimmer_fw" not in blob
+
+
+async def test_home_model_drops_empty_rooms(hass) -> None:
+    """A room with no renderable entity is noise — omitted."""
+    area = await _area(hass, "Leerraum")
+    areas = [{"area_id": area.id, "name": "Leerraum"}]
+    model = rooms._build_home_model(hass, _User("u1"), SCOPE_ALL, areas)
+    assert model["rooms"] == []
+
+
+ROOM_MODEL_KEYS = {"area_id", "name", "climate", "lights", "switches", "temps", "hums", "batts"}
+
+
+async def test_home_model_room_key_contract(hass) -> None:
+    """SEAM: the per-room shape the ga-home strategy renders field-for-field.
+
+    The ga-frontend-bundle strategy reads exactly these keys (its
+    test_seam_room_fields_are_read_verbatim pins the consumer side). Renaming or
+    dropping one here blanks a resident's board — so pin the producer side too."""
+    area = await _area(hass, "Wohnzimmer")
+    from homeassistant.helpers import entity_registry as er
+
+    reg = er.async_get(hass)
+    reg.async_get_or_create("light", "test", "l1", suggested_object_id="wz_lamp")
+    reg.async_update_entity("light.wz_lamp", area_id=area.id)
+    hass.states.async_set("light.wz_lamp", "on", {})
+
+    areas = [{"area_id": area.id, "name": "Wohnzimmer"}]
+    model = rooms._build_home_model(hass, _User("u1"), SCOPE_ALL, areas)
+
+    assert len(model["rooms"]) == 1
+    assert set(model["rooms"][0]) == ROOM_MODEL_KEYS
+    # every entity bucket is a list (the strategy spreads them)
+    for key in ("climate", "lights", "switches", "temps", "hums", "batts"):
+        assert isinstance(model["rooms"][0][key], list)
+    assert model["rooms"][0]["lights"] == ["light.wz_lamp"]
+
+
+async def test_home_model_scoped_user_only_sees_permitted_entities(hass) -> None:
+    """A room-scoped sub-user's model must honour HA's native read permission —
+    the SAME check the state machine uses — so the model matches what the user can
+    actually see, and a leak-guard-hidden entity never reaches a card."""
+    area = await _area(hass, "Wohnzimmer")
+    from homeassistant.helpers import entity_registry as er
+
+    reg = er.async_get(hass)
+    for oid, uid in (("wz_trv", "trv"), ("wz_secret", "secret")):
+        reg.async_get_or_create("climate", "test", uid, suggested_object_id=oid)
+        reg.async_update_entity(f"climate.{oid}", area_id=area.id)
+        hass.states.async_set(f"climate.{oid}", "heat", {})
+
+    class _Perms:
+        def check_entity(self, entity_id: str, key: str) -> bool:
+            # deny exactly the "secret" TRV, allow everything else
+            return not entity_id.endswith("wz_secret")
+
+    class _ScopedUser(_User):
+        def __init__(self, uid: str) -> None:
+            super().__init__(uid)
+            self.permissions = _Perms()
+
+    areas = [{"area_id": area.id, "name": "Wohnzimmer"}]
+    model = rooms._build_home_model(hass, _ScopedUser("sub1"), SCOPE_ROOMS, areas)
+
+    assert model["rooms"][0]["climate"] == ["climate.wz_trv"]
+    assert "climate.wz_secret" not in json.dumps(model)

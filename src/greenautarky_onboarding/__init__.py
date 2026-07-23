@@ -79,6 +79,7 @@ from .http import (
 )
 from .rooms import (
     GAEntityScopingView,
+    GAHomeModelView,
     GAMyRoomsView,
     GASubUserAssignRoomView,
     async_install_home_strategy,
@@ -236,6 +237,7 @@ async def _async_setup_common(hass: HomeAssistant) -> bool:
     # Room-scoped dashboards: the master grants ROOMS, and the single shared
     # dashboard is generated per logged-in user by the ga-home strategy.
     hass.http.register_view(GAMyRoomsView())
+    hass.http.register_view(GAHomeModelView())
     hass.http.register_view(GASubUserAssignRoomView())
     hass.http.register_view(GAEntityScopingView())
 
