@@ -82,10 +82,11 @@ async def _require_tenant_complete_device(request_ctx, token) -> None:
     "card never rendered" timeout (all three hit on the K31 bench,
     2026-07-27):
 
-    * **HA's own onboarding must be finished.** A device wiped by ga_manager
-      <= 0.97 has ``.storage/onboarding`` back to ``{"done": ["user"]}`` —
-      that release deleted the file and Core recreated only the user step — so
-      the frontend redirects every route to ``/onboarding.html``.
+    * **HA's own onboarding must be finished.** If ``.storage/onboarding``
+      still lists pending steps the frontend redirects every route to
+      ``/onboarding.html`` and nothing renders. Seen on the K31 bench, which
+      sits at ``{"done": ["user"]}`` — its pre-wipe backup shows the same, so
+      that is how the bench was provisioned, not something a wipe did.
     * **The caller must be a master**, or the strategy never generates the
       view (that is the UI half of the gate, by design).
     * **The home must have at least one room with something in it.** With no
@@ -101,8 +102,8 @@ async def _require_tenant_complete_device(request_ctx, token) -> None:
             pytest.skip(
                 "Home Assistant's own onboarding is incomplete "
                 f"(pending: {pending}) — the frontend redirects to "
-                "/onboarding.html, so no dashboard renders. Typical on a "
-                "device wiped by ga_manager <= 0.97."
+                "/onboarding.html, so no dashboard renders. Point this at a "
+                "tenant-complete canary."
             )
 
     r = await request_ctx.get(
@@ -135,17 +136,24 @@ async def _open_master_dashboard(pw, token):
         f"window.localStorage.setItem('hassTokens', {json.dumps(json.dumps(hass_tokens))});"
     )
     page = await ctx.new_page()
-    await page.goto("/lovelace/verwalten", wait_until="domcontentloaded")
     card = page.locator("ga-master-card")
-    try:
-        await card.wait_for(timeout=30000)
-    except playwright_async.TimeoutError:
-        pytest.fail(
-            "ga-master-card never rendered on /lovelace/verwalten — either the "
-            "bundle did not load or this user is not a master (the strategy "
-            "only generates the Verwalten view for masters)"
-        )
-    return browser, page, card
+    # Over the mesh the frontend bundle can take a while, and the dashboard
+    # only renders after the strategy has fetched the home model. One reload
+    # absorbs the slow first paint; a second miss is a real failure, not load.
+    for attempt in (1, 2):
+        await page.goto("/lovelace/verwalten", wait_until="domcontentloaded")
+        try:
+            await card.wait_for(timeout=45000)
+            return browser, page, card
+        except playwright_async.TimeoutError:
+            if attempt == 2:
+                pytest.fail(
+                    "ga-master-card never rendered on /lovelace/verwalten "
+                    "after two attempts — either the bundle did not load or "
+                    "this user is not a master (the strategy only generates "
+                    "the Verwalten view for masters)"
+                )
+    raise AssertionError("unreachable")
 
 
 @requires_device
@@ -160,11 +168,13 @@ async def test_danger_zone_renders_and_states_its_limits(socket_enabled) -> None
 
             await card.get_by_text("Gefahrenbereich").wait_for(timeout=10000)
             text = await card.inner_text()
-            # The soft reset cannot remove recorder history — it is
-            # entity-bound, not user-bound. If this copy ever goes, the button
-            # is promising something it does not do.
-            assert "Messwerte" in text
+            # Both entry points are present and say what they do. (The
+            # promises about history and room names live in the DIALOGS —
+            # a <dialog> yields no text until it is open, so they are
+            # asserted in the two tests below that actually open them.)
             assert "Unter-Nutzer" in text
+            assert "Nutzer zurücksetzen" in text
+            assert "Alles löschen" in text
         finally:
             if browser:
                 await browser.close()
@@ -187,6 +197,11 @@ async def test_soft_reset_button_arms_only_on_the_exact_phrase(
             confirm = card.locator("input.hh-confirm")
             go = card.locator("button.hh-go")
             await confirm.wait_for(timeout=10000)
+
+            # The soft reset cannot remove recorder history — it is
+            # entity-bound, not user-bound. If this copy ever goes, the button
+            # is promising something it does not do.
+            assert "Messwerte" in await card.locator("dialog.household-dlg").inner_text()
 
             assert await go.is_disabled(), "armed before anything was typed"
             await confirm.fill("loeschen")
