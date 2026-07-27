@@ -23,6 +23,24 @@
   `_check_pin_verified` was NOT reusable — it reads the sticky `pin_verified`
   flag that stays true forever after onboarding, which would have waved any
   master session straight through to a wipe.
+- **fix(rooms): a wiped device comes back with the DEFAULT rooms again.** HA
+  creates its three default areas in exactly one place — its own onboarding
+  step — and the tenant wipe deliberately keeps `.storage/onboarding` marked
+  done (so the incoming tenant sees only the GA wizard) while wiping
+  `core.area_registry` (room names are tenant data: a tenant can rename any
+  room from the Verwalten tab, and "Omas Zimmer" says something about the
+  household). Nothing then recreated them, so a reset device had ZERO rooms
+  and the room-scoped dashboards had nothing to render. New
+  `default_areas.async_seed_default_areas()` runs at boot and recreates
+  Wohnzimmer / Küche / Schlafzimmer from HA's own `DEFAULT_AREAS` constant +
+  translations. Narrow by construction: only when the site has no areas at all
+  AND GA onboarding is incomplete, so a tenant who deletes their own rooms
+  mid-tenancy never finds them resurrected.
+- Room names are taken in `SITE_DEFAULT_LANGUAGE` (de), not
+  `hass.config.language`: the wipe removes `.storage/core.config` too, so that
+  attribute is back to HA's built-in "en" afterwards and a German household
+  would have been handed a "Living Room". An explicitly configured non-English
+  language still wins.
 - **refactor**: sub-user deletion extracted to `_async_remove_sub_user()` and
   shared by the single-user endpoint and the bulk reset, so the two can never
   drift on what "removed" means.

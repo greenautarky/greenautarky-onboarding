@@ -104,3 +104,10 @@ RESET_CONFIRM_PHRASE = "LÖSCHEN"
 # from the onboarding counters so a fumbled reset PIN can never lock a tenant
 # out of their own onboarding, or vice versa.
 RESET_PIN_SCOPE = "site_reset"
+
+# Language the site presents to residents. Everything user-facing (wizard,
+# strategy views, master card) is German today, and nothing in the GA flow
+# sets `hass.config.language` — so HA's built-in "en" is not a statement of
+# intent, it is just an unset field. Used to pick the default ROOM NAMES after
+# a reset, where "like at installation" means Wohnzimmer, not Living Room.
+SITE_DEFAULT_LANGUAGE = "de"

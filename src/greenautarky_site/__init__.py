@@ -380,6 +380,18 @@ async def _async_setup_common(hass: HomeAssistant) -> bool:
     #  2. legacy per-user boards (`ga-home-<name>`, ADR-0006 v1) are re-registered so
     #     they keep working until they are migrated away.
     async def _dashboards_started(_event: Event | None = None) -> None:
+        # Rooms FIRST — the strategy below renders from them. HA creates its
+        # default areas only in its own onboarding, which the tenant wipe
+        # deliberately leaves marked done while wiping the area registry, so
+        # without this a wiped device comes back with no rooms at all and
+        # nothing ever recreates them (KB #169). No-op during normal tenancy.
+        from .default_areas import async_seed_default_areas
+
+        try:
+            await async_seed_default_areas(hass, _get_state(hass) or {})
+        except Exception:
+            _LOGGER.exception("default areas: seeding failed")
+
         await async_install_home_strategy(hass)
         await async_boot_register_personal_dashboards(hass)
         # Stage A: (re)apply per-user entity scopes from the room matrix. No-op
