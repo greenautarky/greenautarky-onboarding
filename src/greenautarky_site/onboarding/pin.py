@@ -107,6 +107,78 @@ def _check_pin_verified(hass: HomeAssistant) -> web.Response | None:
     return web.json_response({"error": "PIN verification required"}, status=403)
 
 
+async def async_verify_pin_fresh(
+    hass: HomeAssistant, submitted: str, *, scope: str
+) -> web.Response | None:
+    """Re-check the sticker PIN right now. Returns None on success, else a
+    ready error response.
+
+    ``_check_pin_verified`` is deliberately NOT usable for this: it reads
+    ``state["pin_verified"]``, a sticky flag that stays true forever once
+    onboarding is done. That is right for the wizard and useless as a gate on
+    a destructive post-onboarding action — it would wave through anyone with a
+    master session. This re-reads the file and compares the submitted PIN, so
+    the caller proves physical access at the moment they ask.
+
+    ``scope`` namespaces the backoff counters, so a fumbled reset PIN cannot
+    lock a tenant out of onboarding (or the other way round).
+    """
+    state = _get_state(hass)
+    store = _get_store(hass)
+    attempts_key = f"{scope}_pin_attempts"
+    locked_key = f"{scope}_pin_locked_until"
+
+    locked_until = state.get(locked_key)
+    if locked_until:
+        remaining = (
+            datetime.fromisoformat(locked_until) - datetime.now(UTC)
+        ).total_seconds()
+        if remaining > 0:
+            return web.json_response(
+                {"message": "Too many attempts", "retry_after": int(remaining)},
+                status=429,
+            )
+
+    pin_path = _pin_file_path(hass)
+    # File I/O off the event loop — this runs in a request handler.
+    stored_pin = await hass.async_add_executor_job(_read_pin, pin_path)
+    if stored_pin is None:
+        return web.json_response(
+            {"message": "No PIN configured on this device"}, status=404
+        )
+
+    if hmac.compare_digest(
+        (submitted or "").strip().replace("-", "").encode(), stored_pin.encode()
+    ):
+        state[attempts_key] = 0
+        state[locked_key] = None
+        await store.async_save(state)
+        return None
+
+    attempts = state.get(attempts_key, 0) + 1
+    state[attempts_key] = attempts
+    delay = 0
+    if attempts >= 2:
+        delay = min(5 * (2 ** (attempts - 2)), PIN_MAX_DELAY)
+        state[locked_key] = (datetime.now(UTC) + timedelta(seconds=delay)).isoformat()
+    await store.async_save(state)
+    _LOGGER.warning(
+        "invalid %s PIN attempt %d (next retry in %ds)", scope, attempts, delay
+    )
+    return web.json_response(
+        {"message": "Invalid PIN", "retry_after": delay, "attempts": attempts},
+        status=401,
+    )
+
+
+def _read_pin(path: Path) -> str | None:
+    """Read the PIN file, or None if it is absent/unreadable (SYNC)."""
+    try:
+        return path.read_text().strip()
+    except OSError:
+        return None
+
+
 # ---------------------------------------------------------------------------
 # PIN verification (unauthenticated — proves physical access to device)
 # ---------------------------------------------------------------------------

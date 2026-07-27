@@ -1,3 +1,32 @@
+## 2.1.0 — 2026-07-27
+- **feat(household): resident self-service reset — the Danger Zone** (KB #169).
+  Two master-only actions, so a household can finally unmake itself instead of
+  filing a ticket for an operator-only tenant wipe:
+  - `POST /api/greenautarky_site/household/reset` — remove every sub-user of
+    the calling master (accounts, persons, refresh tokens, parent map, room
+    grants, personal dashboards, consents, that master's open invite PINs).
+    Pure Core-side, no restart; the master, rooms, devices and automations
+    survive. Recorder history is entity-bound and therefore NOT touched — only
+    the site reset can remove it, and the UI copy says so.
+  - `POST /api/greenautarky_site/site_reset/request` — file a tenant-wipe
+    request for ga_manager (Core cannot stop Core). Returns 202; the addon
+    re-validates and owns the WIPE/KEEP manifest.
+  - `GET /api/greenautarky_site/site_reset/status` — marker still pending +
+    the addon's last verdict.
+- **The seam is a marker file** (`/config/ga/reset-request.json`, written
+  atomically, nonce + `expires_at`), deliberately not an HTTP call with the
+  addon's bearer token: that token has no scopes today, so handing it to Core
+  would trade a `/config` read for full device control (OTA, docker exec). The
+  marker grants exactly one capability — "ask for a wipe".
+- **Fresh PIN gate**: `async_verify_pin_fresh()` re-reads the sticker PIN per
+  attempt with its own backoff counters (`site_reset_pin_*`). The existing
+  `_check_pin_verified` was NOT reusable — it reads the sticky `pin_verified`
+  flag that stays true forever after onboarding, which would have waved any
+  master session straight through to a wipe.
+- **refactor**: sub-user deletion extracted to `_async_remove_sub_user()` and
+  shared by the single-user endpoint and the bulk reset, so the two can never
+  drift on what "removed" means.
+
 ## 2.0.0 — 2026-07-23
 - **feat!(rename): `greenautarky_onboarding` → `greenautarky_site`** (Odoo
   #574). The component is the deployment-SITE management plane (setup wizard +

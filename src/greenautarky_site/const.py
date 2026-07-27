@@ -70,3 +70,37 @@ SUB_USER_CONSENT_VERSION = 1
 # The privacy policy the sub-user consents to. Placeholder page stood up in
 # parallel; kept in sync with the frontend link + the device GDPR step.
 DATENSCHUTZ_URL = "https://greenautarky.com/datenschutz"
+
+# ─── Resident self-service reset (KB #169) ─────────────────────────────────
+# Two master-only actions on the household "Verwalten" tab:
+#
+#   1. household reset — remove every sub-user. Pure Core-side, no restart.
+#   2. site reset      — the full tenant-wipe. Core cannot stop Core, so the
+#                        work happens in the ga_manager addon; this component
+#                        only files a REQUEST.
+#
+# The seam for (2) is a marker file, deliberately NOT an HTTP call with the
+# addon's bearer token: that token has no scopes today, so handing it to Core
+# would turn a /config read into full device control (OTA, docker exec). A
+# marker grants exactly one capability — "ask for a wipe" — and leaves
+# ga_manager as the enforcement point (it re-validates and owns the manifest).
+#
+# Same directory as MASTER_USERS_FILE, i.e. /config/ga/ — durable, and mapped
+# into the addon (which sees it as /homeassistant/ga/ on current Supervisor).
+RESET_REQUEST_FILE = "ga/reset-request.json"
+RESET_STATUS_FILE = "ga/reset-status.json"
+# Bump when the marker payload changes shape; ga_manager refuses anything it
+# does not know, so an old addon can never misread a new request.
+RESET_REQUEST_SCHEMA_VERSION = 1
+# A request older than this is stale — the addon drops it instead of wiping a
+# device whose owner clicked five minutes ago and walked away. Also bounds the
+# replay window if a marker somehow survives (see the /config/ga wipe gap).
+RESET_REQUEST_TTL_S = 300
+# Typed by the user before either reset arms. German on purpose: it is the
+# resident's UI language, and a phrase you must type cannot be mistranslated
+# into a click.
+RESET_CONFIRM_PHRASE = "LÖSCHEN"
+# Backoff scope for the device-PIN re-check that arms the site reset. Separate
+# from the onboarding counters so a fumbled reset PIN can never lock a tenant
+# out of their own onboarding, or vice versa.
+RESET_PIN_SCOPE = "site_reset"

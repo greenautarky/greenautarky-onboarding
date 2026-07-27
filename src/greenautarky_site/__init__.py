@@ -65,7 +65,10 @@ from .consent_views import (
 from .console_login import GAConsoleLoginView, _migrate_legacy_console_secret
 from .const import DOMAIN, STORAGE_KEY, STORAGE_VERSION
 from .household import (
+    GAHouseholdResetView,
     GAMasterConsolePageView,
+    GASiteResetRequestView,
+    GASiteResetStatusView,
     GASubUserAssignDashboardView,
     GASubUserInviteView,
     GASubUserJoinPageView,
@@ -294,6 +297,11 @@ async def _async_setup_common(hass: HomeAssistant) -> bool:
     hass.http.register_view(GASubUserRemoveView())
     hass.http.register_view(GASubUserSetEnabledView())
     hass.http.register_view(GAMasterConsolePageView())
+    # Danger Zone (KB #169): the household can unmake itself. Soft reset is
+    # Core-side; the site reset only FILES a request that ga_manager executes.
+    hass.http.register_view(GAHouseholdResetView())
+    hass.http.register_view(GASiteResetRequestView())
+    hass.http.register_view(GASiteResetStatusView())
 
     # Room-scoped dashboards: the master grants ROOMS, and the single shared
     # dashboard is generated per logged-in user by the ga-home strategy.
