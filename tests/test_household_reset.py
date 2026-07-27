@@ -67,21 +67,6 @@ class _FakeRequest:
         return self._items[key]
 
 
-@pytest.fixture(autouse=True)
-def _clean_reset_markers(hass):
-    """The hass config dir is shared between tests in a module, so a marker
-    written by one test would make the next one see a phantom pending wipe.
-    Clear both files before and after every test."""
-
-    def _clear() -> None:
-        for name in (RESET_REQUEST_FILE, RESET_STATUS_FILE):
-            Path(hass.config.path(name)).unlink(missing_ok=True)
-
-    _clear()
-    yield
-    _clear()
-
-
 def _seed(hass, state: dict[str, Any] | None = None) -> dict:
     st = state if state is not None else {"completed": True}
     hass.data[DOMAIN] = {"store": _FakeStore(), "state": st}
