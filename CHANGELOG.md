@@ -45,6 +45,12 @@
   included. This is where the language mattered: the wipe removes
   `.storage/core.config` too, so without the default above the rooms would have
   come back as "Living Room".
+- **fix(rooms): handle both shapes of HA's `DEFAULT_AREAS`.** 2025.11 (what
+  the fleet runs) ships plain strings; 2026.2 (what the dev venv resolves)
+  ships `DefaultArea(key, icon)`. Written against the venv only, the seeding
+  silently degraded to the hardcoded fallback on every real device — the K31
+  bench caught it, the test suite could not. Now normalised, with a
+  parametrised test over both shapes.
 - Both defaults are applied ONLY while GA onboarding is incomplete — a device
   is in that state exactly twice, fresh from the flasher and just after a
   reset. An operator who switched a live device to another language, or a

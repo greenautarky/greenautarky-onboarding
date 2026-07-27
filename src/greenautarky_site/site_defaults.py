@@ -77,7 +77,9 @@ async def async_ensure_site_language(
     return SITE_DEFAULT_LANGUAGE
 
 
-async def _async_default_area_specs(hass: HomeAssistant) -> list[tuple[str, str]]:
+async def _async_default_area_specs(
+    hass: HomeAssistant,
+) -> list[tuple[str, str | None]]:
     """(name, icon) for HA's default areas, in the site language.
 
     Reads HA's own constant and translation catalogue so the result is what its
@@ -97,14 +99,21 @@ async def _async_default_area_specs(hass: HomeAssistant) -> list[tuple[str, str]
         )
         specs: list[tuple[str, str]] = []
         for area in DEFAULT_AREAS:
-            name = translations.get(f"component.onboarding.area.{area.key}")
+            # HA changed the shape of this constant: 2025.11 (what the fleet
+            # runs) ships plain strings, 2026.2 (what the dev venv resolves)
+            # ships DefaultArea(key, icon). Written against only one of them,
+            # this silently degraded to the fallback on every real device —
+            # caught on the K31 bench 2026-07-27, not by the test suite.
+            key = getattr(area, "key", area)
+            icon = getattr(area, "icon", None) or next(
+                (i for k, _, i in _FALLBACK_AREAS if k == key), None
+            )
+            name = translations.get(f"component.onboarding.area.{key}")
             if not name:
                 # Missing catalogue entry → use our own name for that key
                 # rather than dropping the room entirely.
-                name = next(
-                    (n for k, n, _ in _FALLBACK_AREAS if k == area.key), area.key
-                )
-            specs.append((name, area.icon))
+                name = next((n for k, n, _ in _FALLBACK_AREAS if k == key), key)
+            specs.append((name, icon))
         return specs
     except Exception as e:
         _LOGGER.warning(

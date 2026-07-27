@@ -153,3 +153,33 @@ async def test_apply_site_defaults_does_language_then_rooms(hass) -> None:
     assert hass.config.language == "de"
     names = {a.name for a in ar.async_get(hass).async_list_areas()}
     assert names == {"Wohnzimmer", "Küche", "Schlafzimmer"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shape", ["str", "obj"])
+async def test_handles_both_shapes_of_has_default_areas(hass, monkeypatch, shape) -> None:
+    """HA 2025.11 (the fleet) ships DEFAULT_AREAS as plain strings; 2026.2
+    (the dev venv) ships DefaultArea(key, icon). Written against only one,
+    this degraded to the hardcoded fallback on every real device — the K31
+    bench caught it, the suite did not."""
+    import greenautarky_site.site_defaults as mod
+
+    class _Obj:
+        def __init__(self, key, icon):
+            self.key, self.icon = key, icon
+
+    areas = (
+        ("living_room", "kitchen", "bedroom")
+        if shape == "str"
+        else (_Obj("living_room", "mdi:sofa"), _Obj("kitchen", "mdi:stove"),
+              _Obj("bedroom", "mdi:bed"))
+    )
+    monkeypatch.setattr(
+        "homeassistant.components.onboarding.const.DEFAULT_AREAS", areas
+    )
+    caplog_names = await mod._async_default_area_specs(hass)
+
+    assert [n for n, _ in caplog_names] == ["Wohnzimmer", "Küche", "Schlafzimmer"]
+    # Icons survive both shapes — on the string shape they come from our own
+    # table, which is the only place they exist in that HA version.
+    assert [i for _, i in caplog_names] == ["mdi:sofa", "mdi:stove", "mdi:bed"]
