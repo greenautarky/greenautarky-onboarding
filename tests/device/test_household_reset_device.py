@@ -53,18 +53,43 @@ requires_device = pytest.mark.skipif(
     reason="GA_DEVICE_URL / GA_DEVICE_MASTER_USERNAME / GA_DEVICE_MASTER_PASSWORD not set",
 )
 def _require_pin() -> str:
-    """The sticker PIN, or an explicit verdict about why we cannot check it.
+    """The sticker PIN of the device under test, or a verdict about why not.
 
-    Skipping locally is fine; skipping in CI is not. A silent skip there means
-    the tier reports green while the one regression that would let any master
-    session wipe a home went unchecked.
+    A sticker PIN belongs to ONE device, but the test gate targets whichever
+    canary the run picks (``testgate_device``, default K6) — the master itself
+    is provisioned at run time, so nothing else here is device-bound. A single
+    static PIN is therefore only valid for one target, and using it against a
+    different device would not just fail: a wrong PIN increments that device's
+    real backoff counters.
+
+    So the PIN is only used when ``GA_DEVICE_PIN_FOR`` names the device we are
+    actually talking to. Mismatch → skip, never guess.
+
+    Skipping for a mismatch is fine; skipping on the MATCHING device in CI is
+    not — that reports green while the one regression that would let any
+    master session wipe a home goes unchecked.
+
+    The clean fix is to stop shipping a static secret at all: the fleet-manager
+    already stores ``onboarding_pin`` per device (``enrollments``), it just does
+    not expose it. A scoped endpoint mirroring ``/api/devices/{id}/
+    admin-credential`` would let the gate fetch the right PIN for whatever
+    canary it targets — the same way it already fetches the admin credential.
     """
+    target = os.environ.get("GA_DEVICE_ID", "")
+    pin_for = os.environ.get("GA_DEVICE_PIN_FOR", "")
+
+    if pin_for and target and pin_for != target:
+        pytest.skip(
+            f"GA_DEVICE_PIN belongs to {pin_for}, this run targets {target} — "
+            "refusing to spend a wrong PIN against a real device (it would "
+            "arm that device's backoff)"
+        )
     if DEVICE_PIN:
         return DEVICE_PIN
     if os.environ.get("CI"):
         pytest.fail(
-            "GA_DEVICE_PIN is not set — the sticky-flag regression check did "
-            "not run. Set the GA_CANARY_DEVICE_PIN secret."
+            f"GA_DEVICE_PIN is not set for {target or 'this device'} — the "
+            "sticky-flag regression check did not run."
         )
     pytest.skip("GA_DEVICE_PIN not set (sticker PIN)")
 
