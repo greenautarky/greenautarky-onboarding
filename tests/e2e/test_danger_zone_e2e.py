@@ -75,6 +75,55 @@ async def _token(request_ctx, username: str, password: str) -> str:
     return (await r.json())["access_token"]
 
 
+async def _require_tenant_complete_device(request_ctx, token) -> None:
+    """Skip unless the device can actually render the Verwalten view.
+
+    Three preconditions, each of which otherwise ends as a confusing
+    "card never rendered" timeout (all three hit on the K31 bench,
+    2026-07-27):
+
+    * **HA's own onboarding must be finished.** A device wiped by ga_manager
+      <= 0.97 has ``.storage/onboarding`` back to ``{"done": ["user"]}`` —
+      that release deleted the file and Core recreated only the user step — so
+      the frontend redirects every route to ``/onboarding.html``.
+    * **The caller must be a master**, or the strategy never generates the
+      view (that is the UI half of the gate, by design).
+    * **The home must have at least one room with something in it.** With no
+      devices assigned to an area the strategy short-circuits to its
+      "no rooms" view and the Verwalten tab does not exist — correct
+      behaviour, but nothing to test against.
+    """
+    r = await request_ctx.get("/api/onboarding")
+    if r.ok:
+        steps = await r.json()
+        pending = [s["step"] for s in steps if not s.get("done")]
+        if pending:
+            pytest.skip(
+                "Home Assistant's own onboarding is incomplete "
+                f"(pending: {pending}) — the frontend redirects to "
+                "/onboarding.html, so no dashboard renders. Typical on a "
+                "device wiped by ga_manager <= 0.97."
+            )
+
+    r = await request_ctx.get(
+        "/api/greenautarky_site/home_model",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.ok, await r.text()
+    model = await r.json()
+    if not model.get("is_master"):
+        pytest.skip(
+            f"{MASTER_USERNAME!r} is not a flagged master on this device — "
+            "the strategy only generates the Verwalten view for masters"
+        )
+    if not (model.get("rooms") or []):
+        pytest.skip(
+            "the home has no rooms with devices in them, so the strategy "
+            "renders its no-rooms view and there is no Verwalten tab — point "
+            "this at a tenant-complete canary, not a freshly wiped bench"
+        )
+
+
 async def _open_master_dashboard(pw, token):
     browser = await pw.chromium.launch()
     ctx = await browser.new_context(base_url=DEVICE_URL)
@@ -106,6 +155,7 @@ async def test_danger_zone_renders_and_states_its_limits(socket_enabled) -> None
         browser = None
         try:
             token = await _token(api, MASTER_USERNAME, MASTER_PASSWORD)
+            await _require_tenant_complete_device(api, token)
             browser, _page, card = await _open_master_dashboard(pw, token)
 
             await card.get_by_text("Gefahrenbereich").wait_for(timeout=10000)
@@ -130,6 +180,7 @@ async def test_soft_reset_button_arms_only_on_the_exact_phrase(
         browser = None
         try:
             token = await _token(api, MASTER_USERNAME, MASTER_PASSWORD)
+            await _require_tenant_complete_device(api, token)
             browser, _page, card = await _open_master_dashboard(pw, token)
 
             await card.locator("button.household-reset").click()
@@ -161,6 +212,7 @@ async def test_full_erase_needs_both_phrase_and_pin(socket_enabled) -> None:
         browser = None
         try:
             token = await _token(api, MASTER_USERNAME, MASTER_PASSWORD)
+            await _require_tenant_complete_device(api, token)
             browser, _page, card = await _open_master_dashboard(pw, token)
 
             await card.locator("button.site-reset").click()
