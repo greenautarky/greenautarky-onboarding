@@ -65,7 +65,10 @@ from .consent_views import (
 from .console_login import GAConsoleLoginView, _migrate_legacy_console_secret
 from .const import DOMAIN, STORAGE_KEY, STORAGE_VERSION
 from .household import (
+    GAHouseholdResetView,
     GAMasterConsolePageView,
+    GASiteResetRequestView,
+    GASiteResetStatusView,
     GASubUserAssignDashboardView,
     GASubUserInviteView,
     GASubUserJoinPageView,
@@ -294,6 +297,11 @@ async def _async_setup_common(hass: HomeAssistant) -> bool:
     hass.http.register_view(GASubUserRemoveView())
     hass.http.register_view(GASubUserSetEnabledView())
     hass.http.register_view(GAMasterConsolePageView())
+    # Danger Zone (KB #169): the household can unmake itself. Soft reset is
+    # Core-side; the site reset only FILES a request that ga_manager executes.
+    hass.http.register_view(GAHouseholdResetView())
+    hass.http.register_view(GASiteResetRequestView())
+    hass.http.register_view(GASiteResetStatusView())
 
     # Room-scoped dashboards: the master grants ROOMS, and the single shared
     # dashboard is generated per logged-in user by the ga-home strategy.
@@ -372,6 +380,20 @@ async def _async_setup_common(hass: HomeAssistant) -> bool:
     #  2. legacy per-user boards (`ga-home-<name>`, ADR-0006 v1) are re-registered so
     #     they keep working until they are migrated away.
     async def _dashboards_started(_event: Event | None = None) -> None:
+        # Site defaults FIRST — the strategy below renders from the rooms, and
+        # the room names are a translation lookup against the site language.
+        # Both only apply while GA onboarding is incomplete (= fresh device or
+        # just reset): German is the product default and nothing else ever set
+        # it, and HA creates its default areas only in its own onboarding,
+        # which the wipe leaves marked done while wiping the area registry
+        # (KB #169). No-op during normal tenancy.
+        from .site_defaults import async_apply_site_defaults
+
+        try:
+            await async_apply_site_defaults(hass, _get_state(hass) or {})
+        except Exception:
+            _LOGGER.exception("site defaults: applying failed")
+
         await async_install_home_strategy(hass)
         await async_boot_register_personal_dashboards(hass)
         # Stage A: (re)apply per-user entity scopes from the room matrix. No-op

@@ -26,6 +26,7 @@ from homeassistant.helpers.storage import Store
 
 from .. import dashboards
 from ..consent import async_record_consent
+from ..const import SITE_DEFAULT_LANGUAGE
 from ..household.dashboards_admin import _reconcile_dashboard_visibility
 from ..household.masters import _read_master_user_ids, _write_master_users
 from ..household.sub_users import _async_create_linked_person
@@ -366,7 +367,12 @@ class GAOnboardingCreateUserView(HomeAssistantView):
         name = body.get("name", "").strip()
         username = body.get("username", "").strip()
         password = body.get("password", "")
-        body.get("language", "de")
+        # This used to read `language` and drop it on the floor, so every
+        # device kept running on HA's built-in "en" no matter what the wizard
+        # sent. Server-side translations follow this field — that is how a
+        # reset device ended up seeding rooms called "Living Room" (KB #169).
+        # German is the product default; an explicit choice still wins.
+        language = (body.get("language") or SITE_DEFAULT_LANGUAGE).strip()
 
         if not name or not username or not password or not client_id:
             return self.json_message(
@@ -391,6 +397,14 @@ class GAOnboardingCreateUserView(HomeAssistantView):
 
         # Create a linked Person (guaranteed fleet-wide — ADR-0006).
         await _async_create_linked_person(hass, name, user.id)
+
+        # Persist the site language (.storage/core.config). Best-effort: a
+        # failed language write must not cost the tenant their new account.
+        if hass.config.language != language:
+            try:
+                await hass.config.async_update(language=language)
+            except Exception:
+                _LOGGER.exception("could not set site language to %s", language)
 
         # ADR-0006 hybrid main-user flag: the FIRST tenant user created during
         # device onboarding auto-becomes the main user (master) IF no main-user

@@ -419,6 +419,54 @@ def _children_of(state: dict[str, Any], master_id: str) -> dict[str, Any]:
     }
 
 
+class _AdminRemovalRefused(Exception):
+    """A removal target resolved to an admin/owner account."""
+
+
+async def _async_remove_sub_user(
+    hass: HomeAssistant, state: dict[str, Any], sub_user_id: str
+) -> list[str]:
+    """Delete one sub-user and every trace of them from the household state.
+
+    Shared by the single-user endpoint below and the household reset
+    (``household/reset.py``), so the two can never drift on what "removed"
+    means — a bulk reset that forgot one bookkeeping dict would leave a
+    departed person's room grants behind.
+
+    The caller owns the parent check and the ``store.async_save``; this
+    returns the dashboard paths that still need a visibility reconcile once
+    that save has landed. Raises ``_AdminRemovalRefused`` if the id resolves
+    to an admin/owner — a master must never delete one via a spoofed id.
+    """
+    # Local import: scoping/rooms imports this module at module level, so the
+    # reverse edge must stay lazy to avoid a cycle.
+    from ..scoping import rooms
+
+    user = await hass.auth.async_get_user(sub_user_id)
+    if user is not None and (user.is_owner or user.is_admin):
+        raise _AdminRemovalRefused(sub_user_id)
+
+    assigned_paths = list(
+        (state.get("sub_user_dashboards") or {}).get(sub_user_id, [])
+    )
+
+    if user is not None:
+        await _async_delete_linked_person(hass, sub_user_id)
+        await hass.auth.async_remove_user(user)
+
+    (state.get("sub_users") or {}).pop(sub_user_id, None)
+    (state.get("sub_user_dashboards") or {}).pop(sub_user_id, None)
+    # Room grants die with the user — otherwise a future user that happens to
+    # reuse this id would inherit his rooms.
+    (state.get(rooms.STATE_ROOMS) or {}).pop(sub_user_id, None)
+    # The personal dashboard must DIE with the user — an orphaned board plus
+    # the visible-strip below made it public to everyone (KB #149 §5a).
+    removed_board = await dashboards.async_delete_personal_dashboard(
+        hass, state, sub_user_id
+    )
+    return [p for p in assigned_paths if p != removed_board]
+
+
 async def _disable_orphaned_sub_users(
     hass: HomeAssistant, revoked_master_ids: set[str]
 ) -> list[str]:
@@ -598,10 +646,6 @@ class GASubUserRemoveView(HomeAssistantView):
 
     async def post(self, request: web.Request) -> web.Response:
         """Delete a sub-user owned by the calling master."""
-        # Local import: scoping/rooms imports this module at module level,
-        # so the reverse edge must stay lazy to avoid a cycle.
-        from ..scoping import rooms
-
         hass: HomeAssistant = request.app["hass"]
         master, err = await _require_master(request)
         if err:
@@ -617,41 +661,15 @@ class GASubUserRemoveView(HomeAssistantView):
         if sub_user_id not in _children_of(state, master.id):
             return web.json_response({"message": "Not your sub-user"}, status=403)
 
-        user = await hass.auth.async_get_user(sub_user_id)
-        if user is None:
-            # Already gone — clean bookkeeping and report success (idempotent).
-            (state.get("sub_users") or {}).pop(sub_user_id, None)
-            (state.get("sub_user_dashboards") or {}).pop(sub_user_id, None)
-            await dashboards.async_delete_personal_dashboard(
-                hass, state, sub_user_id
+        try:
+            to_reconcile = await _async_remove_sub_user(hass, state, sub_user_id)
+        except _AdminRemovalRefused:
+            return web.json_response(
+                {"message": "Refusing to remove an admin"}, status=403
             )
-            await store.async_save(state)
-            return self.json({"status": "ok", "removed": sub_user_id})
 
-        # Safety: never let a master delete an admin/owner via a spoofed id.
-        if user.is_owner or user.is_admin:
-            return web.json_response({"message": "Refusing to remove an admin"}, status=403)
-
-        # Dashboards this sub-user was assigned to (reconcile after removal).
-        assigned_paths = list((state.get("sub_user_dashboards") or {}).get(sub_user_id, []))
-
-        await _async_delete_linked_person(hass, sub_user_id)
-        await hass.auth.async_remove_user(user)
-
-        (state.get("sub_users") or {}).pop(sub_user_id, None)
-        (state.get("sub_user_dashboards") or {}).pop(sub_user_id, None)
-        # Room grants die with the user — otherwise a future user that happens to
-        # reuse this id would inherit his rooms.
-        (state.get(rooms.STATE_ROOMS) or {}).pop(sub_user_id, None)
-        # The personal dashboard must DIE with the user — an orphaned board
-        # plus the visible-strip below made it public to everyone (KB #149 §5a).
-        removed_board = await dashboards.async_delete_personal_dashboard(
-            hass, state, sub_user_id
-        )
         await store.async_save(state)
-        for url_path in assigned_paths:
-            if url_path == removed_board:
-                continue  # deleted, nothing to reconcile
+        for url_path in to_reconcile:
             await _reconcile_dashboard_visibility(hass, url_path, state)
 
         _LOGGER.info("master %s removed sub-user %s", master.id, sub_user_id)

@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "kind": "tenant-wipe",
+  "nonce": "0123456789abcdef0123456789abcdef",
+  "requested_at": "2026-07-27T12:00:00+00:00",
+  "expires_at": "2026-07-27T12:05:00+00:00",
+  "requested_by": {
+    "ha_user_id": "aca9436cdb034b24970155f77d7eb0e6",
+    "name": "Anna Bewohner"
+  },
+  "reason": "resident self-service reset (master aca9436cdb034b24970155f77d7eb0e6)",
+  "wipe_zigbee_pairing": false
+}
