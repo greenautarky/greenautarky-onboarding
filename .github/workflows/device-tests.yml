@@ -34,6 +34,11 @@ jobs:
           GA_DEVICE_URL: ${{ inputs.device_url }}
           GA_DEVICE_MASTER_USERNAME: ${{ secrets.GA_CANARY_MASTER_USERNAME }}
           GA_DEVICE_MASTER_PASSWORD: ${{ secrets.GA_CANARY_MASTER_PASSWORD }}
+          # Sticker PIN of the canary. Without it the Danger-Zone test that
+          # proves a wrong PIN is refused DESPITE the sticky `pin_verified`
+          # flag skips silently — i.e. the one regression that would let any
+          # master session wipe a home goes unchecked (KB #169).
+          GA_DEVICE_PIN: ${{ secrets.GA_CANARY_DEVICE_PIN }}
         run: pytest tests/device -m device -v -o addopts=""
 
   e2e:
