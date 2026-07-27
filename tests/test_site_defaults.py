@@ -1,4 +1,4 @@
-"""Tests for restoring the installation-default rooms (KB #169).
+"""Tests for the defaults a fresh/reset site starts from (KB #169).
 
 The hole these close: HA creates its three default areas only inside its own
 onboarding step. The tenant wipe keeps `.storage/onboarding` marked done (so
@@ -15,7 +15,12 @@ from __future__ import annotations
 import pytest
 from homeassistant.helpers import area_registry as ar
 
-from greenautarky_site.default_areas import async_seed_default_areas
+from greenautarky_site.const import SITE_DEFAULT_LANGUAGE
+from greenautarky_site.site_defaults import (
+    async_apply_site_defaults,
+    async_ensure_site_language,
+    async_seed_default_areas,
+)
 
 
 @pytest.mark.asyncio
@@ -88,7 +93,7 @@ async def test_falls_back_when_ha_translations_are_unavailable(
 ) -> None:
     """A missing translation catalogue must still produce rooms — a home with
     slightly off names beats a home with none."""
-    import greenautarky_site.default_areas as mod
+    import greenautarky_site.site_defaults as mod
 
     async def _boom(*a, **kw):
         raise RuntimeError("no translations here")
@@ -99,3 +104,52 @@ async def test_falls_back_when_ha_translations_are_unavailable(
     created = await mod.async_seed_default_areas(hass, {"completed": False})
 
     assert created == ["Wohnzimmer", "Küche", "Schlafzimmer"]
+
+
+# --------------------------------------------------------------------------- #
+# site language — German is the product default
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_language_is_set_to_german_on_a_fresh_site(hass) -> None:
+    """Nothing in the GA flow ever set this, so every device ran on HA's
+    built-in "en" — which is what decides server-side translations, room names
+    included."""
+    hass.config.language = "en"
+
+    applied = await async_ensure_site_language(hass, {"completed": False})
+
+    assert applied == SITE_DEFAULT_LANGUAGE == "de"
+    assert hass.config.language == "de"
+
+
+@pytest.mark.asyncio
+async def test_language_is_left_alone_once_onboarding_is_complete(hass) -> None:
+    """An operator who switched a live device to another language is not
+    overruled on the next restart — "default" means the starting value."""
+    hass.config.language = "fr"
+
+    applied = await async_ensure_site_language(hass, {"completed": True})
+
+    assert applied is None
+    assert hass.config.language == "fr"
+
+
+@pytest.mark.asyncio
+async def test_language_write_is_skipped_when_already_german(hass) -> None:
+    hass.config.language = "de"
+    assert await async_ensure_site_language(hass, {"completed": False}) is None
+
+
+@pytest.mark.asyncio
+async def test_apply_site_defaults_does_language_then_rooms(hass) -> None:
+    """The room names are a translation lookup, so the language has to land
+    first. Asserting the German outcome proves the order held."""
+    hass.config.language = "en"
+
+    await async_apply_site_defaults(hass, {"completed": False})
+
+    assert hass.config.language == "de"
+    names = {a.name for a in ar.async_get(hass).async_list_areas()}
+    assert names == {"Wohnzimmer", "Küche", "Schlafzimmer"}

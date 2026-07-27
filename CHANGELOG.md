@@ -23,24 +23,32 @@
   `_check_pin_verified` was NOT reusable — it reads the sticky `pin_verified`
   flag that stays true forever after onboarding, which would have waved any
   master session straight through to a wipe.
+- **feat(site): German is the site default, and it is actually applied.**
+  Nothing in the GA flow ever set `hass.config.language` — the wizard read a
+  `language` field and dropped it on the floor (a literal no-op statement), so
+  every device ran on HA's built-in `"en"`. Invisible most of the time, because
+  the wizard, the strategy views and the master card are hard-coded German, but
+  it decides every SERVER-side translation. New `SITE_DEFAULT_LANGUAGE = "de"`,
+  applied in two places: `site_defaults.async_ensure_site_language()` at boot
+  while onboarding is incomplete, and the wizard's create-user step (which now
+  persists what it is sent, defaulting to German).
 - **fix(rooms): a wiped device comes back with the DEFAULT rooms again.** HA
   creates its three default areas in exactly one place — its own onboarding
   step — and the tenant wipe deliberately keeps `.storage/onboarding` marked
   done (so the incoming tenant sees only the GA wizard) while wiping
   `core.area_registry` (room names are tenant data: a tenant can rename any
   room from the Verwalten tab, and "Omas Zimmer" says something about the
-  household). Nothing then recreated them, so a reset device had ZERO rooms
-  and the room-scoped dashboards had nothing to render. New
-  `default_areas.async_seed_default_areas()` runs at boot and recreates
-  Wohnzimmer / Küche / Schlafzimmer from HA's own `DEFAULT_AREAS` constant +
-  translations. Narrow by construction: only when the site has no areas at all
-  AND GA onboarding is incomplete, so a tenant who deletes their own rooms
-  mid-tenancy never finds them resurrected.
-- Room names are taken in `SITE_DEFAULT_LANGUAGE` (de), not
-  `hass.config.language`: the wipe removes `.storage/core.config` too, so that
-  attribute is back to HA's built-in "en" afterwards and a German household
-  would have been handed a "Living Room". An explicitly configured non-English
-  language still wins.
+  household). Nothing then recreated them, so a reset device had ZERO rooms and
+  the room-scoped dashboards had nothing to render.
+  `site_defaults.async_seed_default_areas()` recreates Wohnzimmer / Küche /
+  Schlafzimmer from HA's own `DEFAULT_AREAS` constant + translations, icons
+  included. This is where the language mattered: the wipe removes
+  `.storage/core.config` too, so without the default above the rooms would have
+  come back as "Living Room".
+- Both defaults are applied ONLY while GA onboarding is incomplete — a device
+  is in that state exactly twice, fresh from the flasher and just after a
+  reset. An operator who switched a live device to another language, or a
+  tenant who deleted a room on purpose, is not overruled on the next restart.
 - **refactor**: sub-user deletion extracted to `_async_remove_sub_user()` and
   shared by the single-user endpoint and the bulk reset, so the two can never
   drift on what "removed" means.

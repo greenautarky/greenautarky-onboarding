@@ -380,17 +380,19 @@ async def _async_setup_common(hass: HomeAssistant) -> bool:
     #  2. legacy per-user boards (`ga-home-<name>`, ADR-0006 v1) are re-registered so
     #     they keep working until they are migrated away.
     async def _dashboards_started(_event: Event | None = None) -> None:
-        # Rooms FIRST — the strategy below renders from them. HA creates its
-        # default areas only in its own onboarding, which the tenant wipe
-        # deliberately leaves marked done while wiping the area registry, so
-        # without this a wiped device comes back with no rooms at all and
-        # nothing ever recreates them (KB #169). No-op during normal tenancy.
-        from .default_areas import async_seed_default_areas
+        # Site defaults FIRST — the strategy below renders from the rooms, and
+        # the room names are a translation lookup against the site language.
+        # Both only apply while GA onboarding is incomplete (= fresh device or
+        # just reset): German is the product default and nothing else ever set
+        # it, and HA creates its default areas only in its own onboarding,
+        # which the wipe leaves marked done while wiping the area registry
+        # (KB #169). No-op during normal tenancy.
+        from .site_defaults import async_apply_site_defaults
 
         try:
-            await async_seed_default_areas(hass, _get_state(hass) or {})
+            await async_apply_site_defaults(hass, _get_state(hass) or {})
         except Exception:
-            _LOGGER.exception("default areas: seeding failed")
+            _LOGGER.exception("site defaults: applying failed")
 
         await async_install_home_strategy(hass)
         await async_boot_register_personal_dashboards(hass)
