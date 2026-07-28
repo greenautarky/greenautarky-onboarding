@@ -173,9 +173,12 @@ async def test_scoped_subuser_in_the_browser() -> None:
 @pytest.mark.xfail(
     strict=True,
     reason=(
-        "KNOWN BROKEN as shipped in rc36 — a scoped user's dashboard does not "
-        "render (registry WS commands fail, hass.entities/.devices/.areas are "
-        "null, HA's sidebar crashes). Flips to a failure once fixed."
+        "BROKEN on rc36 as shipped — a scoped user's dashboard does not render "
+        "(registry WS commands fail, hass.entities/.devices/.areas are null, "
+        "HA's sidebar crashes). FIXED in the component, but this tier runs "
+        "against whatever the device is running: it keeps xfailing until a "
+        "build carries the fix, then flips to a failure so this marker gets "
+        "removed."
     ),
 )
 async def test_scoped_user_dashboard_actually_renders(socket_enabled) -> None:

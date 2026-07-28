@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import types
 from types import SimpleNamespace
 from unittest.mock import MagicMock
-
-import pytest
 
 from greenautarky_site.scoping import leak_guard
 
@@ -376,40 +375,44 @@ def test_active_connection_forbids_patching_send_result():
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "KNOWN BROKEN as shipped in rc36 — registry filtering for scoped users "
-        "does not work and cannot work as written. Two independent defects: "
-        "(1) the wrapper assigns connection.send_result, but ActiveConnection "
-        "declares __slots__ without it, so every filtered command raises "
-        "AttributeError and HA returns unknown_error; (2) even with the "
-        "interception moved to send_message (a real slot), the registry "
-        "handlers send `entry.json_fragment` objects, not dicts, so "
-        "_filter_result's row shape never matches. Consequence on a device: a "
-        "scoped user's hass.entities/.devices/.areas stay null and their "
-        "dashboard does not render at all (K0, baked rc36, 2026-07-28). "
-        "Deliberately left failing rather than 'fixed' by making the commands "
-        "succeed — that would turn a loud failure into a silent leak of "
-        "unfiltered registry data. strict=True so this flips to a failure the "
-        "moment someone makes it work, forcing the reason to be updated."
-    ),
-)
-async def test_filter_path_works_on_a_real_active_connection(hass):
-    """The filtered commands must survive a REAL connection object."""
+async def test_filter_path_holds_the_invariant_on_a_real_connection(hass):
+    """The invariant, over a REAL ActiveConnection: a scoped user's registry
+    answer contains EXACTLY the rows of their assigned rooms — no more, and no
+    less.
+
+    "No less" is the half nobody checked. The tests that existed would have
+    accepted an empty answer just as happily as a correct one, which is how a
+    guard that returned nothing at all stayed green (rc36, K0 2026-07-28).
+
+    Driven through a real connection on purpose: the previous implementation
+    patched ``connection.send_result``, which a hand-written stub accepts and
+    ActiveConnection — with its ``__slots__`` — does not.
+    """
     from homeassistant.components.websocket_api.connection import ActiveConnection
+    from homeassistant.helpers import area_registry as ar
+    from homeassistant.helpers import entity_registry as er
     from homeassistant.setup import async_setup_component
 
     await async_setup_component(hass, "websocket_api", {})
     await async_setup_component(hass, "config", {})
-    handler = _install_and_get(hass, "config/area_registry/list")
 
+    mine = ar.async_get(hass).async_create("Mein Zimmer")
+    theirs = ar.async_get(hass).async_create("Fremdes Zimmer")
+    ent_reg = er.async_get(hass)
+    ent_reg.async_get_or_create("light", "demo", "mine", suggested_object_id="mine")
+    ent_reg.async_update_entity("light.mine", area_id=mine.id)
+    ent_reg.async_get_or_create("light", "demo", "theirs", suggested_object_id="theirs")
+    ent_reg.async_update_entity("light.theirs", area_id=theirs.id)
+
+    user = _user(groups=["ga_scope_x"])
+    user.permissions.check_entity.side_effect = (
+        lambda entity_id, _policy: entity_id == "light.mine"
+    )
+
+    handler = _install_and_get(hass, "config/area_registry/list")
     sent: list = []
     conn = ActiveConnection(
-        logging.getLogger(__name__),
-        hass,
-        lambda msg: sent.append(msg),
-        _user(groups=["ga_scope_x"]),
+        logging.getLogger(__name__), hass, sent.append, user,
         types.SimpleNamespace(id="refresh-token-id"),
     )
 
@@ -417,9 +420,46 @@ async def test_filter_path_works_on_a_real_active_connection(hass):
     await hass.async_block_till_done()
 
     assert sent, "the handler produced no message at all"
-    last = sent[-1]
-    if callable(last):
-        last = last()
-    assert last.get("success") is not False, (
-        f"filtered command failed against a real connection: {last.get('error')}"
+    payload = sent[-1]
+    if isinstance(payload, (bytes, bytearray, str)):
+        payload = json.loads(payload)
+    assert payload.get("success") is not False, (
+        f"filtered command failed on a real connection: {payload.get('error')}"
     )
+    returned = {row["area_id"] for row in payload["result"]}
+    assert returned == {mine.id}, (
+        f"expected exactly the user's own room, got {returned} "
+        f"(mine={mine.id}, theirs={theirs.id})"
+    )
+
+
+async def test_filter_failure_sends_an_empty_result_instead_of_crashing(hass, monkeypatch):
+    """A guard that takes the app down when it trips is worse than one that
+    shows nothing. Raising is precisely what left scoped users with a blank
+    screen, because HA turned it into `unknown_error` and the frontend's
+    registry collections stayed null."""
+    from homeassistant.components.websocket_api.connection import ActiveConnection
+    from homeassistant.setup import async_setup_component
+
+    await async_setup_component(hass, "websocket_api", {})
+    await async_setup_component(hass, "config", {})
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("filter exploded")
+
+    monkeypatch.setattr(leak_guard, "_filter_result", _boom)
+
+    handler = _install_and_get(hass, "config/area_registry/list")
+    sent: list = []
+    conn = ActiveConnection(
+        logging.getLogger(__name__), hass, sent.append, _user(groups=["ga_scope_x"]),
+        types.SimpleNamespace(id="refresh-token-id"),
+    )
+    handler(hass, conn, {"id": 1, "type": "config/area_registry/list"})
+    await hass.async_block_till_done()
+
+    payload = sent[-1]
+    if isinstance(payload, (bytes, bytearray, str)):
+        payload = json.loads(payload)
+    assert payload.get("success") is not False, "a filter bug must not fail the command"
+    assert payload["result"] == [], "a filter bug must yield nothing, never everything"
