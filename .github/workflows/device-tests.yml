@@ -11,8 +11,12 @@ on:
   workflow_dispatch:
     inputs:
       device_url:
-        description: "Device base URL (e.g. http://100.126.128.133:8123) — CANARY ONLY"
+        description: "Device base URL (e.g. http://100.126.191.20:8123) — CANARY ONLY"
         required: true
+      device_id:
+        description: "Device id of that canary (e.g. KIB-SON-00000006) — used to check the sticker PIN belongs to it"
+        required: false
+        default: KIB-SON-00000006
       tier:
         description: "Which tier to run"
         type: choice
@@ -34,10 +38,17 @@ jobs:
           GA_DEVICE_URL: ${{ inputs.device_url }}
           GA_DEVICE_MASTER_USERNAME: ${{ secrets.GA_CANARY_MASTER_USERNAME }}
           GA_DEVICE_MASTER_PASSWORD: ${{ secrets.GA_CANARY_MASTER_PASSWORD }}
-          # Sticker PIN of the canary. Without it the Danger-Zone test that
-          # proves a wrong PIN is refused DESPITE the sticky `pin_verified`
-          # flag skips silently — i.e. the one regression that would let any
-          # master session wipe a home goes unchecked (KB #169).
+          # Sticker PIN for the Danger-Zone regression check (KB #169).
+          # Unlike the master (provisioned at run time by ci_provision_master.py
+          # on whatever canary is targeted), a PIN belongs to ONE device — so it
+          # is only used when GA_DEVICE_PIN_FOR matches the target, otherwise
+          # the test skips rather than spending a wrong PIN against a real
+          # device and arming its backoff.
+          # TODO: drop both of these once the fleet-manager exposes
+          # /api/devices/{id}/onboarding-pin — it already stores the PIN per
+          # device in `enrollments`, it just does not serve it.
+          GA_DEVICE_ID: ${{ inputs.device_id }}
+          GA_DEVICE_PIN_FOR: ${{ vars.GA_CANARY_DEVICE_PIN_FOR }}
           GA_DEVICE_PIN: ${{ secrets.GA_CANARY_DEVICE_PIN }}
         run: pytest tests/device -m device -v -o addopts=""
 
