@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import logging
 import types
-
-import pytest
-
 from types import SimpleNamespace
 from unittest.mock import MagicMock
+
+import pytest
 
 from greenautarky_site.scoping import leak_guard
 
