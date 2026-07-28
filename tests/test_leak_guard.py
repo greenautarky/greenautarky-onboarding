@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import logging
+import types
+
+import pytest
+
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -98,13 +103,28 @@ async def test_install_wraps_and_is_idempotent(hass):
 
 
 class _Conn:
+    """Stub connection that mirrors the REAL funnel.
+
+    The earlier version stored results directly in ``send_result``, so the
+    wrapper's interception was never exercised the way it runs in production —
+    and because a plain class accepts any attribute, it also hid that the real
+    ``ActiveConnection`` forbids patching ``send_result`` at all (rc36 defect,
+    K0 2026-07-28). ``send_result`` now goes through ``send_message`` exactly
+    as HA's own connection does.
+    """
+
     def __init__(self, user):
         self.user = user
         self.results: list = []
         self.errors: list = []
 
+    def send_message(self, message):
+        if isinstance(message, dict) and message.get("type") == "result":
+            self.results.append(message.get("result"))
+
     def send_result(self, msg_id, result=None):
-        self.results.append(result)
+        self.send_message({"id": msg_id, "type": "result", "success": True,
+                           "result": result})
 
     def send_error(self, msg_id, code, message):
         self.errors.append((code, message))
@@ -324,3 +344,83 @@ def test_rest_history_guard_idempotent():
         assert HistoryPeriodView.get is first  # not double-wrapped
     finally:
         HistoryPeriodView.get = saved
+
+
+# ─── the mechanism, against the REAL connection object ────────────────────
+#
+# Everything above drives the wrapper through `_Conn`, a hand-written stub.
+# A stub is a plain class, so it happily accepts a monkey-patched attribute —
+# which is exactly what the filter path does (`connection.send_result = ...`).
+# The real `ActiveConnection` declares `__slots__` WITHOUT `send_result`, so
+# that assignment raises AttributeError and every filtered command comes back
+# as `unknown_error`.
+#
+# Result on a device: a scoped user's `hass.entities` / `.devices` / `.areas`
+# stay null, HA's own sidebar then indexes null and the whole dashboard fails
+# to render. Found on K0 running baked rc36 (2026-07-28); five unit tests and
+# a browser e2e were green throughout.
+#
+# The lesson is the test, not the fix: a stub that permits what the real
+# collaborator forbids proves the logic and hides the wiring.
+
+
+def test_active_connection_forbids_patching_send_result():
+    """Pin the constraint itself, so the wrapper can never go back to
+    monkey-patching it — regardless of how the wrapper is written."""
+    from homeassistant.components.websocket_api.connection import ActiveConnection
+
+    slots = getattr(ActiveConnection, "__slots__", None)
+    assert slots is not None, "ActiveConnection is expected to use __slots__"
+    assert "send_result" not in slots, (
+        "send_result is not an assignable slot — any interception that assigns "
+        "to it will raise AttributeError at runtime"
+    )
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "KNOWN BROKEN as shipped in rc36 — registry filtering for scoped users "
+        "does not work and cannot work as written. Two independent defects: "
+        "(1) the wrapper assigns connection.send_result, but ActiveConnection "
+        "declares __slots__ without it, so every filtered command raises "
+        "AttributeError and HA returns unknown_error; (2) even with the "
+        "interception moved to send_message (a real slot), the registry "
+        "handlers send `entry.json_fragment` objects, not dicts, so "
+        "_filter_result's row shape never matches. Consequence on a device: a "
+        "scoped user's hass.entities/.devices/.areas stay null and their "
+        "dashboard does not render at all (K0, baked rc36, 2026-07-28). "
+        "Deliberately left failing rather than 'fixed' by making the commands "
+        "succeed — that would turn a loud failure into a silent leak of "
+        "unfiltered registry data. strict=True so this flips to a failure the "
+        "moment someone makes it work, forcing the reason to be updated."
+    ),
+)
+async def test_filter_path_works_on_a_real_active_connection(hass):
+    """The filtered commands must survive a REAL connection object."""
+    from homeassistant.components.websocket_api.connection import ActiveConnection
+    from homeassistant.setup import async_setup_component
+
+    await async_setup_component(hass, "websocket_api", {})
+    await async_setup_component(hass, "config", {})
+    handler = _install_and_get(hass, "config/area_registry/list")
+
+    sent: list = []
+    conn = ActiveConnection(
+        logging.getLogger(__name__),
+        hass,
+        lambda msg: sent.append(msg),
+        _user(groups=["ga_scope_x"]),
+        types.SimpleNamespace(id="refresh-token-id"),
+    )
+
+    handler(hass, conn, {"id": 1, "type": "config/area_registry/list"})
+    await hass.async_block_till_done()
+
+    assert sent, "the handler produced no message at all"
+    last = sent[-1]
+    if callable(last):
+        last = last()
+    assert last.get("success") is not False, (
+        f"filtered command failed against a real connection: {last.get('error')}"
+    )
