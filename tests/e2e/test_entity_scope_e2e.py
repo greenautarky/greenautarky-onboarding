@@ -19,6 +19,7 @@ Self-cleaning; CANARIES ONLY.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import secrets
@@ -106,6 +107,16 @@ async def test_scoped_subuser_in_the_browser() -> None:
 
             scoping_was_on = (await (await api.get(f"{API}/entity_scoping", headers=ah)).json())["enabled"]
             r = await api.post(f"{API}/entity_scoping", headers=ah, data={"enabled": True})
+            if r.status == 403:
+                # The toggle is admin-only. Without GA_DEVICE_ADMIN_* the run
+                # falls back to master creds, and a plain master is not an
+                # admin — that is a missing credential, not a product failure,
+                # and it should not read like one.
+                pytest.skip(
+                    "entity_scoping is admin-only and no GA_DEVICE_ADMIN_USERNAME/"
+                    "GA_DEVICE_ADMIN_PASSWORD were provided (the master fallback "
+                    "is not an admin on this device)"
+                )
             assert r.ok, await r.text()
 
             master_states = await (await api.get("/api/states", headers=mh)).json()
@@ -153,4 +164,92 @@ async def test_scoped_subuser_in_the_browser() -> None:
                 await api.post(f"{API}/sub_user/remove", headers=mh, data={"sub_user_id": sub_user_id})
             if browser:
                 await browser.close()
+            await api.dispose()
+
+
+# ─── the dashboard must actually RENDER for a scoped user ─────────────────
+#
+# The test above proves the scope is enforced by fetching from inside the
+# page. That says nothing about whether the page renders — and on rc36 it
+# does not: the leak_guard's registry filtering raises, hass.entities /
+# .devices / .areas stay null, and HA's own sidebar crashes indexing null.
+# A scoped resident sees a blank screen. The API-level assertion was green
+# the whole time.
+#
+# See greenautarky-onboarding#31 for the two-layer root cause.
+
+
+@requires_device
+async def test_scoped_user_dashboard_actually_renders(socket_enabled) -> None:
+    """A resident must SEE their rooms, not just be allowed to fetch them."""
+    import json as _json
+
+    marker = uuid.uuid4().hex[:6]
+    sub_name = f"RenderTest {marker}"
+    sub_pw = f"pw-{secrets.token_urlsafe(12)}"
+
+    async with playwright_async.async_playwright() as p:
+        api = await p.request.new_context(base_url=DEVICE_URL)
+        browser = None
+        sub_user_id = None
+        try:
+            mh = {"Authorization": f"Bearer {await _token(api, MASTER_USERNAME, MASTER_PASSWORD)}"}
+            r = await api.post(f"{API}/sub_user/invite", headers=mh, data={})
+            assert r.ok, await r.text()
+            pin = (await r.json())["pin"]
+            r = await api.post(
+                f"{API}/sub_user/join",
+                data={"invite_pin": pin, "name": sub_name, "password": sub_pw,
+                      "datenschutz_consent": True},
+            )
+            assert r.ok, await r.text()
+            sub_username = (await r.json())["username"]
+            listing = await (await api.get(f"{API}/sub_user/list", headers=mh)).json()
+            sub_user_id = next(s["user_id"] for s in listing["sub_users"]
+                               if s.get("name") == sub_name)
+            # give them a room, otherwise the strategy renders its no-rooms view
+            areas = listing.get("areas") or []
+            assert areas, "device has no areas to grant"
+            await api.post(f"{API}/sub_user/assign_room", headers=mh,
+                           data={"sub_user_id": sub_user_id,
+                                 "area_id": areas[0]["area_id"], "assigned": True})
+
+            sub_tok = await _token(api, sub_username, sub_pw)
+            browser = await p.chromium.launch()
+            ctx = await browser.new_context(base_url=DEVICE_URL)
+            await ctx.add_init_script(
+                "window.__rejections = [];"
+                "window.addEventListener('unhandledrejection',"
+                " e => window.__rejections.push(String(e.reason && e.reason.message || e.reason)));"
+            )
+            await ctx.add_init_script(
+                "window.localStorage.setItem('hassTokens', "
+                f"{_json.dumps(_json.dumps({'access_token': sub_tok, 'token_type': 'Bearer', 'expires_in': 1800, 'hassUrl': DEVICE_URL, 'clientId': CLIENT_ID, 'expires': 9999999999999}))});"
+            )
+            page = await ctx.new_page()
+            await page.goto("/lovelace/0", wait_until="domcontentloaded")
+            await asyncio.sleep(10)
+
+            maps = await page.evaluate(
+                "() => { const h = document.querySelector('home-assistant')?.hass;"
+                " return h ? {entities: h.entities === null, devices: h.devices === null,"
+                " areas: h.areas === null} : null; }"
+            )
+            rejections = await page.evaluate("() => window.__rejections || []")
+            views = await page.locator("hui-view").count()
+
+            assert maps and not any(maps.values()), (
+                f"registry collections are null for a scoped user: {maps} — the "
+                f"WS registry commands failed. Rejections: {rejections[:3]}"
+            )
+            assert views > 0, (
+                f"the scoped user's dashboard did not render. Rejections: "
+                f"{rejections[:3]}"
+            )
+        finally:
+            if browser:
+                await browser.close()
+            if sub_user_id:
+                await api.post(f"{API}/sub_user/remove", headers=mh,
+                               data={"sub_user_id": sub_user_id})
             await api.dispose()

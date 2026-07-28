@@ -18,6 +18,7 @@ airtight.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import Callable
 from typing import Any
@@ -32,6 +33,7 @@ from homeassistant.components.websocket_api import (
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.json import json_dumps
 
 from .entity_scope import is_user_scoped
 
@@ -119,6 +121,107 @@ def _filter_result(hass: HomeAssistant, user: Any, shape: str, result: Any) -> A
     return result
 
 
+class _CapturingConnection:
+    """Stands in for the real connection while a handler runs.
+
+    We cannot intercept by patching the real ``ActiveConnection`` — it uses
+    ``__slots__``, so assigning ``send_result`` raises. Handing the handler a
+    stand-in we own avoids touching it at all, and captures every output path
+    (``send_result``, ``send_error`` and the raw pre-serialised
+    ``send_message`` the registry lists use).
+
+    Everything else delegates to the real connection, so a handler that reads
+    ``connection.user`` or ``connection.subscriptions`` behaves normally.
+    """
+
+    def __init__(self, real: Any) -> None:
+        self._real = real
+        self.captured: list[tuple] = []
+
+    def __getattr__(self, name: str) -> Any:
+        # only reached for attributes we do not define ourselves
+        return getattr(self._real, name)
+
+    @callback
+    def send_message(self, message: Any) -> None:
+        self.captured.append(("message", message))
+
+    @callback
+    def send_result(self, msg_id: Any, result: Any = None) -> None:
+        self.captured.append(("result", msg_id, result))
+
+    @callback
+    def send_error(self, msg_id: Any, code: str, message: str) -> None:
+        self.captured.append(("error", msg_id, code, message))
+
+
+def _plain(value: Any) -> Any:
+    """Plain Python for ``value``, whatever HA packed into it.
+
+    Registry handlers hand back ``json_fragment`` objects — pre-serialised
+    JSON, not dicts. ``_filter_result`` keeps any row it does not recognise as
+    a dict (deliberately: never drop what you cannot inspect), so without this
+    round-trip a scoped user received the WHOLE registry. Round-tripping
+    through HA's own encoder normalises every shape it can produce, at the cost
+    of the caching optimisation — for scoped users only.
+    """
+    try:
+        return json.loads(json_dumps(value))
+    except Exception:
+        _LOGGER.debug("leak_guard: could not normalise a result, filtering as-is")
+        return value
+
+
+def _forward(
+    hass: HomeAssistant,
+    user: Any,
+    shape: str,
+    connection: Any,
+    msg: dict[str, Any],
+    captured: list[tuple],
+) -> None:
+    """Filter what the handler produced and send it on the real connection.
+
+    Fail-soft by construction: any surprise here sends an EMPTY result rather
+    than raising. A guard that takes the whole app down when it trips is worse
+    than one that shows the user nothing — and raising is exactly what left
+    scoped users with a blank screen before.
+    """
+    try:
+        for item in captured:
+            kind = item[0]
+            if kind == "error":
+                connection.send_error(*item[1:])
+            elif kind == "result":
+                connection.send_result(
+                    item[1], _filter_result(hass, user, shape, _plain(item[2]))
+                )
+            else:
+                payload = item[1]
+                decoded: Any = payload
+                if isinstance(payload, (bytes, bytearray, str)):
+                    decoded = json.loads(payload)
+                if (
+                    isinstance(decoded, dict)
+                    and decoded.get("success")
+                    and "result" in decoded
+                ):
+                    connection.send_result(
+                        decoded.get("id", msg.get("id")),
+                        _filter_result(hass, user, shape, decoded["result"]),
+                    )
+                else:
+                    connection.send_message(payload)
+    except Exception:
+        _LOGGER.exception(
+            "leak_guard: could not forward %s — sending an empty result", shape
+        )
+        try:
+            connection.send_result(msg.get("id"), [])
+        except Exception:
+            _LOGGER.exception("leak_guard: empty-result fallback failed too")
+
+
 def _pruned_stream_msg(
     hass: HomeAssistant, user: Any, command: str, msg: dict[str, Any]
 ) -> dict[str, Any] | None:
@@ -183,28 +286,36 @@ def _wrap(hass: HomeAssistant, command: str, original: Callable, shape: str | No
                 return None
             return original(hass_, connection, pruned)
 
-        # Intercept the single result the handler sends, filter, restore.
-        orig_send_result = connection.send_result
-
-        @callback
-        def filtered_send_result(msg_id: Any, result: Any = None) -> None:
-            orig_send_result(msg_id, _filter_result(hass_, user, shape or "", result))
-
-        connection.send_result = filtered_send_result
+        # Run the ORIGINAL handler against a connection we own, then filter
+        # what it produced and forward it on the real one.
+        #
+        # The previous implementation patched ``connection.send_result`` on the
+        # real object. That could never work: ActiveConnection declares
+        # ``__slots__`` without ``send_result``, so the assignment raised
+        # AttributeError and HA answered every filtered command with
+        # ``unknown_error`` — leaving the frontend's registry collections null
+        # and a scoped user with no dashboard at all (K0, baked rc36).
+        #
+        # It also could not have worked for the registry lists even if it had
+        # installed: those handlers never call ``send_result``. They build the
+        # response BYTES themselves and hand them to ``send_message`` for the
+        # caching win. Hence the decode below — we filter the decoded rows and
+        # re-send, which costs that optimisation for scoped users only.
+        proxy = _CapturingConnection(connection)
         try:
-            res = original(hass_, connection, msg)
-            if asyncio.iscoroutine(res):
-                async def _await_then_restore() -> None:
-                    try:
-                        await res
-                    finally:
-                        connection.send_result = orig_send_result
-                return _await_then_restore()
-            connection.send_result = orig_send_result
-            return res
+            res = original(hass_, proxy, msg)
         except Exception:
-            connection.send_result = orig_send_result
+            _forward(hass_, user, shape or "", connection, msg, proxy.captured)
             raise
+        if asyncio.iscoroutine(res):
+            async def _await_then_forward() -> None:
+                try:
+                    await res
+                finally:
+                    _forward(hass_, user, shape or "", connection, msg, proxy.captured)
+            return _await_then_forward()
+        _forward(hass_, user, shape or "", connection, msg, proxy.captured)
+        return res
 
     guarded._ga_leak_guarded = True  # type: ignore[attr-defined]
     # The schema travels separately in the registry tuple, so install() must

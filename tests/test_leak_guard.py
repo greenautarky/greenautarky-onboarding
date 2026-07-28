@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+import logging
+import types
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -98,13 +101,28 @@ async def test_install_wraps_and_is_idempotent(hass):
 
 
 class _Conn:
+    """Stub connection that mirrors the REAL funnel.
+
+    The earlier version stored results directly in ``send_result``, so the
+    wrapper's interception was never exercised the way it runs in production —
+    and because a plain class accepts any attribute, it also hid that the real
+    ``ActiveConnection`` forbids patching ``send_result`` at all (rc36 defect,
+    K0 2026-07-28). ``send_result`` now goes through ``send_message`` exactly
+    as HA's own connection does.
+    """
+
     def __init__(self, user):
         self.user = user
         self.results: list = []
         self.errors: list = []
 
+    def send_message(self, message):
+        if isinstance(message, dict) and message.get("type") == "result":
+            self.results.append(message.get("result"))
+
     def send_result(self, msg_id, result=None):
-        self.results.append(result)
+        self.send_message({"id": msg_id, "type": "result", "success": True,
+                           "result": result})
 
     def send_error(self, msg_id, code, message):
         self.errors.append((code, message))
@@ -324,3 +342,124 @@ def test_rest_history_guard_idempotent():
         assert HistoryPeriodView.get is first  # not double-wrapped
     finally:
         HistoryPeriodView.get = saved
+
+
+# ─── the mechanism, against the REAL connection object ────────────────────
+#
+# Everything above drives the wrapper through `_Conn`, a hand-written stub.
+# A stub is a plain class, so it happily accepts a monkey-patched attribute —
+# which is exactly what the filter path does (`connection.send_result = ...`).
+# The real `ActiveConnection` declares `__slots__` WITHOUT `send_result`, so
+# that assignment raises AttributeError and every filtered command comes back
+# as `unknown_error`.
+#
+# Result on a device: a scoped user's `hass.entities` / `.devices` / `.areas`
+# stay null, HA's own sidebar then indexes null and the whole dashboard fails
+# to render. Found on K0 running baked rc36 (2026-07-28); five unit tests and
+# a browser e2e were green throughout.
+#
+# The lesson is the test, not the fix: a stub that permits what the real
+# collaborator forbids proves the logic and hides the wiring.
+
+
+def test_active_connection_forbids_patching_send_result():
+    """Pin the constraint itself, so the wrapper can never go back to
+    monkey-patching it — regardless of how the wrapper is written."""
+    from homeassistant.components.websocket_api.connection import ActiveConnection
+
+    slots = getattr(ActiveConnection, "__slots__", None)
+    assert slots is not None, "ActiveConnection is expected to use __slots__"
+    assert "send_result" not in slots, (
+        "send_result is not an assignable slot — any interception that assigns "
+        "to it will raise AttributeError at runtime"
+    )
+
+
+async def test_filter_path_holds_the_invariant_on_a_real_connection(hass):
+    """The invariant, over a REAL ActiveConnection: a scoped user's registry
+    answer contains EXACTLY the rows of their assigned rooms — no more, and no
+    less.
+
+    "No less" is the half nobody checked. The tests that existed would have
+    accepted an empty answer just as happily as a correct one, which is how a
+    guard that returned nothing at all stayed green (rc36, K0 2026-07-28).
+
+    Driven through a real connection on purpose: the previous implementation
+    patched ``connection.send_result``, which a hand-written stub accepts and
+    ActiveConnection — with its ``__slots__`` — does not.
+    """
+    from homeassistant.components.websocket_api.connection import ActiveConnection
+    from homeassistant.helpers import area_registry as ar
+    from homeassistant.helpers import entity_registry as er
+    from homeassistant.setup import async_setup_component
+
+    await async_setup_component(hass, "websocket_api", {})
+    await async_setup_component(hass, "config", {})
+
+    mine = ar.async_get(hass).async_create("Mein Zimmer")
+    theirs = ar.async_get(hass).async_create("Fremdes Zimmer")
+    ent_reg = er.async_get(hass)
+    ent_reg.async_get_or_create("light", "demo", "mine", suggested_object_id="mine")
+    ent_reg.async_update_entity("light.mine", area_id=mine.id)
+    ent_reg.async_get_or_create("light", "demo", "theirs", suggested_object_id="theirs")
+    ent_reg.async_update_entity("light.theirs", area_id=theirs.id)
+
+    user = _user(groups=["ga_scope_x"])
+    user.permissions.check_entity.side_effect = (
+        lambda entity_id, _policy: entity_id == "light.mine"
+    )
+
+    handler = _install_and_get(hass, "config/area_registry/list")
+    sent: list = []
+    conn = ActiveConnection(
+        logging.getLogger(__name__), hass, sent.append, user,
+        types.SimpleNamespace(id="refresh-token-id"),
+    )
+
+    handler(hass, conn, {"id": 1, "type": "config/area_registry/list"})
+    await hass.async_block_till_done()
+
+    assert sent, "the handler produced no message at all"
+    payload = sent[-1]
+    if isinstance(payload, (bytes, bytearray, str)):
+        payload = json.loads(payload)
+    assert payload.get("success") is not False, (
+        f"filtered command failed on a real connection: {payload.get('error')}"
+    )
+    returned = {row["area_id"] for row in payload["result"]}
+    assert returned == {mine.id}, (
+        f"expected exactly the user's own room, got {returned} "
+        f"(mine={mine.id}, theirs={theirs.id})"
+    )
+
+
+async def test_filter_failure_sends_an_empty_result_instead_of_crashing(hass, monkeypatch):
+    """A guard that takes the app down when it trips is worse than one that
+    shows nothing. Raising is precisely what left scoped users with a blank
+    screen, because HA turned it into `unknown_error` and the frontend's
+    registry collections stayed null."""
+    from homeassistant.components.websocket_api.connection import ActiveConnection
+    from homeassistant.setup import async_setup_component
+
+    await async_setup_component(hass, "websocket_api", {})
+    await async_setup_component(hass, "config", {})
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("filter exploded")
+
+    monkeypatch.setattr(leak_guard, "_filter_result", _boom)
+
+    handler = _install_and_get(hass, "config/area_registry/list")
+    sent: list = []
+    conn = ActiveConnection(
+        logging.getLogger(__name__), hass, sent.append, _user(groups=["ga_scope_x"]),
+        types.SimpleNamespace(id="refresh-token-id"),
+    )
+    handler(hass, conn, {"id": 1, "type": "config/area_registry/list"})
+    await hass.async_block_till_done()
+
+    payload = sent[-1]
+    if isinstance(payload, (bytes, bytearray, str)):
+        payload = json.loads(payload)
+    assert payload.get("success") is not False, "a filter bug must not fail the command"
+    assert payload["result"] == [], "a filter bug must yield nothing, never everything"

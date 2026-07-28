@@ -1,3 +1,24 @@
+## 2.1.1 — 2026-07-28
+- **fix(scoping): registry filtering that actually installs, and actually
+  filters.** A scoped sub-user had NO dashboard at all on rc36 — blank page.
+  Two defects: the guard patched `connection.send_result`, which
+  `ActiveConnection` forbids (`__slots__`), so every filtered command answered
+  `unknown_error` and the frontend's registry collections stayed null, taking
+  HA's own sidebar down with them; and even installed, the filter matched
+  nothing, because registry handlers emit `json_fragment` / pre-serialised
+  bytes while `_filter_result` deliberately keeps rows it cannot inspect — so
+  the naive fix would have leaked the WHOLE registry to scoped users.
+  The original handler now runs against a stand-in connection we own, and its
+  output is normalised through HA's own encoder before filtering. Fail-soft:
+  anything unexpected yields an empty result instead of raising.
+  Verified on K0: a scoped user gets 58 entities / 2 devices / **2 areas** —
+  exactly their two assigned rooms — against 176 / 24 / 6 for the master.
+- **test:** the suite now asserts the invariant ("exactly the user's own rooms,
+  no more AND no less") against a real `ActiveConnection`, and a browser test
+  asserts a scoped user's dashboard actually renders. The previous tests drove
+  a hand-written stub that permitted the very monkey-patch the real object
+  forbids, and would have accepted an empty answer as readily as a correct one.
+
 ## 2.1.0 — 2026-07-27
 - **feat(household): resident self-service reset — the Danger Zone** (KB #169).
   Two master-only actions, so a household can finally unmake itself instead of
