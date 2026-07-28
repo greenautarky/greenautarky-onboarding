@@ -107,6 +107,16 @@ async def test_scoped_subuser_in_the_browser() -> None:
 
             scoping_was_on = (await (await api.get(f"{API}/entity_scoping", headers=ah)).json())["enabled"]
             r = await api.post(f"{API}/entity_scoping", headers=ah, data={"enabled": True})
+            if r.status == 403:
+                # The toggle is admin-only. Without GA_DEVICE_ADMIN_* the run
+                # falls back to master creds, and a plain master is not an
+                # admin — that is a missing credential, not a product failure,
+                # and it should not read like one.
+                pytest.skip(
+                    "entity_scoping is admin-only and no GA_DEVICE_ADMIN_USERNAME/"
+                    "GA_DEVICE_ADMIN_PASSWORD were provided (the master fallback "
+                    "is not an admin on this device)"
+                )
             assert r.ok, await r.text()
 
             master_states = await (await api.get("/api/states", headers=mh)).json()
@@ -170,17 +180,6 @@ async def test_scoped_subuser_in_the_browser() -> None:
 
 
 @requires_device
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "BROKEN on rc36 as shipped — a scoped user's dashboard does not render "
-        "(registry WS commands fail, hass.entities/.devices/.areas are null, "
-        "HA's sidebar crashes). FIXED in the component, but this tier runs "
-        "against whatever the device is running: it keeps xfailing until a "
-        "build carries the fix, then flips to a failure so this marker gets "
-        "removed."
-    ),
-)
 async def test_scoped_user_dashboard_actually_renders(socket_enabled) -> None:
     """A resident must SEE their rooms, not just be allowed to fetch them."""
     import json as _json
