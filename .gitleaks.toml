@@ -1,0 +1,28 @@
+# gitleaks configuration for greenautarky-onboarding.
+#
+# WHY THIS FILE EXISTS
+# --------------------
+# The secret scan passes `--config` explicitly, so this file must exist or the
+# job fails loudly (rc > 1 = "the scanner broke", never "clean"). That is
+# deliberate: a config that silently disappears must not degrade into the
+# default ruleset without anyone noticing.
+#
+# It is also where known-dead findings get recorded, once there are any. The
+# scan sweeps the FULL history on every push, so a secret that was ever
+# committed keeps the job red forever — long after the credential was revoked.
+# That is worse than it sounds: a gate that is permanently red stops being read.
+# On 2026-07-29 exactly that happened to ha-operating-system's scan.
+#
+# RULES FOR ADDING AN ALLOWLIST ENTRY — all three, no exceptions:
+#   1. The credential is REVOKED, not merely rotated out of the working tree.
+#      Deleting the line from HEAD does nothing; the history still has it.
+#   2. The entry names what it was, when it was revoked, and how that was
+#      verified. "Looks unused" is not a revocation.
+#   3. It pins exact commit fingerprints. Never a bare path or a rule — that
+#      would silence every future secret in the same file.
+
+title = "greenautarky-onboarding"
+
+[extend]
+# Keep every upstream rule; this file only exists to add allowlist entries.
+useDefault = true
