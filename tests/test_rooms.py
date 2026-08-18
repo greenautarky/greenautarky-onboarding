@@ -393,3 +393,56 @@ async def test_home_model_scoped_user_only_sees_permitted_entities(hass) -> None
 
     assert model["rooms"][0]["climate"] == ["climate.wz_trv"]
     assert "climate.wz_secret" not in json.dumps(model)
+
+
+async def test_a_room_thermostat_replaces_the_raw_valves(hass) -> None:
+    """One room, one thermostat — derived, not by hiding anything.
+
+    `ga_heating` creates a `climate` entity per area that fans out to the valves in it.
+    Once it exists, listing the valves alongside it would show a resident three
+    thermostats for one room, two of which are the same radiators the first one drives.
+
+    Deliberately DERIVED and not solved by hiding the valves in the registry: hiding
+    writes persistent state that outlives its cause, so a device where `ga_heating`
+    fails to load would show the resident nothing at all and let them operate nothing.
+    Here, if the room thermostat is not there, the valves simply appear again — which is
+    the correct behaviour for a failure, and it needs no code to run in order to happen.
+    """
+    from homeassistant.helpers import entity_registry as er
+
+    area = await _area(hass, "Wohnzimmer")
+    reg = er.async_get(hass)
+
+    for slug in ("trv_a", "trv_b"):
+        reg.async_get_or_create("climate", "mqtt", slug, suggested_object_id=slug)
+        reg.async_update_entity(f"climate.{slug}", area_id=area.id)
+        hass.states.async_set(f"climate.{slug}", "heat", {})
+
+    reg.async_get_or_create(
+        "climate", "ga_heating", f"ga_heating_{area.id}", suggested_object_id="wohnzimmer"
+    )
+    reg.async_update_entity("climate.wohnzimmer", area_id=area.id)
+    hass.states.async_set("climate.wohnzimmer", "heat", {})
+
+    areas = [{"area_id": area.id, "name": "Wohnzimmer"}]
+    model = rooms._build_home_model(hass, _User("u1"), SCOPE_ALL, areas)
+
+    assert model["rooms"][0]["climate"] == ["climate.wohnzimmer"]
+
+
+async def test_without_a_room_thermostat_the_valves_are_what_there_is(hass) -> None:
+    """The other half of the same rule, and the reason it is safe: on a device without
+    `ga_heating`, or where it failed to load, nothing is suppressed."""
+    from homeassistant.helpers import entity_registry as er
+
+    area = await _area(hass, "Wohnzimmer")
+    reg = er.async_get(hass)
+    for slug in ("trv_a", "trv_b"):
+        reg.async_get_or_create("climate", "mqtt", slug, suggested_object_id=slug)
+        reg.async_update_entity(f"climate.{slug}", area_id=area.id)
+        hass.states.async_set(f"climate.{slug}", "heat", {})
+
+    areas = [{"area_id": area.id, "name": "Wohnzimmer"}]
+    model = rooms._build_home_model(hass, _User("u1"), SCOPE_ALL, areas)
+
+    assert model["rooms"][0]["climate"] == ["climate.trv_a", "climate.trv_b"]
