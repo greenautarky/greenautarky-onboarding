@@ -1,3 +1,11 @@
+## 2.2.0 — 2026-08-24
+- **feat(home-model): one thermostat per room, derived rather than by hiding
+  valves.** The home model now derives a single thermostat per room from the
+  radiators in it, instead of presenting valves and hiding the ones that should
+  not be touched. Cut together with `ga-heating` 0.2.0 — they are two halves of
+  the same feature (room thermostats), and shipping one without the other ships
+  it half-built. Released for canary testing, not as a fleet release.
+
 ## 2.1.1 — 2026-07-28
 - **fix(scoping): registry filtering that actually installs, and actually
   filters.** A scoped sub-user had NO dashboard at all on rc36 — blank page.
