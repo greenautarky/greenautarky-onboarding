@@ -1,3 +1,38 @@
+## 2.3.0 — 2026-08-25
+
+### Added
+- `POST /api/greenautarky_site/rooms/sync` — GACI pushes the flat's rooms in at
+  installation and the component makes them real: it creates the areas and
+  places the Zigbee devices in them by `ieee_address` (KB #184, ADR-0008).
+
+  Replaces a GitHub Actions workflow that SSHed into the device as root to do
+  the same thing, authenticated by a token compiled into the installer app.
+
+  Merge is the only mode. GACI owns the rooms at installation; the resident owns
+  them afterwards, so a `replace` mode would be a way to delete a resident's
+  rooms from the cloud. A request asking for one is refused, not downgraded.
+
+  Two details that are load-bearing rather than cosmetic:
+
+  - A new area is created under the ENGLISH catalogue name so Home Assistant
+    derives `area_id` from the type, then immediately renamed to the installer's
+    name. `area_id` is fixed at creation and survives renames, so the id stays
+    catalogue-shaped — which is the only thing the fleet-wide room type is
+    derived from — while the resident sees a name in their own language.
+  - Matching prefers `area_id == type` over the name. A freshly flashed device
+    already carries living_room / kitchen / bedroom (measured on K31 after a
+    reflash), so adopting those three is the normal case; matching on name first
+    would have produced six rooms in every flat.
+
+  A resident rename is reported as a single boolean. The new name is personal
+  data and never leaves the device — the endpoint stores what GACI installed and
+  compares, so the cloud can show "Wohnzimmer (renamed)" without ever learning
+  what it was renamed to.
+
+  No pseudonym here: `area_ref` is derived with a salt in ga_manager's add-on
+  volume, which this container cannot read. This returns the plain `area_id` and
+  ga_manager converts it before anything leaves the device.
+
 ## 2.2.0 — 2026-08-24
 - **feat(home-model): one thermostat per room, derived rather than by hiding
   valves.** The home model now derives a single thermostat per room from the
