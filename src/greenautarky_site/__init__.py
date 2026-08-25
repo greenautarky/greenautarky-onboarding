@@ -97,6 +97,7 @@ from .onboarding import (
     GAPinVerifyView,
 )
 from .onboarding.pin import _migrate_legacy_pin
+from .rooms_sync import GARoomsSyncView
 from .scoping import (
     GAEntityScopingView,
     GAHomeModelView,
@@ -273,6 +274,10 @@ async def _async_setup_common(hass: HomeAssistant) -> bool:
     hass.http.register_view(GAOnboardingTelemetryView())
     hass.http.register_view(GALedConfigView())
     hass.http.register_view(GAOnboardingEthernetView())
+    # ADR-0008 / KB #184: GACI pushes the flat's rooms in at
+    # installation, before anyone has onboarded. Reached through
+    # Supervisor's Core proxy, so it needs no user account.
+    hass.http.register_view(GARoomsSyncView())
     hass.http.register_view(GAOnboardingCompleteView())
     hass.http.register_view(GAOnboardingCreateUserView())
     hass.http.register_view(GAOnboardingResetView())
