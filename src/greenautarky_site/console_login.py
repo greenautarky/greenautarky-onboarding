@@ -84,7 +84,13 @@ _SEEN_NONCES: dict[str, float] = {}
 # The destination validator lives in its own import-free module so it can be
 # tested without standing up Home Assistant — see console_dest.py for why that
 # matters for this particular guard.
-from .console_dest import CONSOLE_LOGIN_DEFAULT_DEST, safe_dest as _safe_dest  # noqa: E402
+# Two suppressions below, both deliberate. The import sits under the module
+# constants rather than at the top (E402), and CONSOLE_LOGIN_DEFAULT_DEST is
+# re-exported rather than used here (F401) — callers and tests read the default
+# from the module the login lives in, not from the validator's private home.
+from .console_dest import CONSOLE_LOGIN_DEFAULT_DEST  # noqa: E402,F401
+from .console_dest import safe_dest as _safe_dest  # noqa: E402
+
 
 def _migrate_legacy_console_secret() -> bool:
     """Move the console-login secret from the legacy `/share/` path to
@@ -111,13 +117,15 @@ def _migrate_legacy_console_secret() -> bool:
             LEGACY_CONSOLE_LOGIN_SECRET_FILE.unlink()
             _LOGGER.info(
                 "console-login: removed stale legacy file at %s (new path "
-                "already populated)", LEGACY_CONSOLE_LOGIN_SECRET_FILE,
+                "already populated)",
+                LEGACY_CONSOLE_LOGIN_SECRET_FILE,
             )
         except OSError as e:
             _LOGGER.warning(
                 "console-login: could not remove legacy file %s: %s "
                 "(addons mounted on /share/ can still read it)",
-                LEGACY_CONSOLE_LOGIN_SECRET_FILE, e,
+                LEGACY_CONSOLE_LOGIN_SECRET_FILE,
+                e,
             )
         return False
     try:
@@ -130,14 +138,16 @@ def _migrate_legacy_console_secret() -> bool:
         LEGACY_CONSOLE_LOGIN_SECRET_FILE.unlink()
         _LOGGER.info(
             "console-login: migrated secret from %s → %s and removed legacy",
-            LEGACY_CONSOLE_LOGIN_SECRET_FILE, CONSOLE_LOGIN_SECRET_FILE,
+            LEGACY_CONSOLE_LOGIN_SECRET_FILE,
+            CONSOLE_LOGIN_SECRET_FILE,
         )
         return True
     except OSError as e:
         _LOGGER.warning(
             "console-login: migration failed (%s): legacy file remains at "
             "%s — operator must move it manually + chmod 0600",
-            e, LEGACY_CONSOLE_LOGIN_SECRET_FILE,
+            e,
+            LEGACY_CONSOLE_LOGIN_SECRET_FILE,
         )
         return False
 
@@ -150,7 +160,10 @@ def _read_console_secret() -> bytes | None:
         return None
     # Accept hex or base64url. Both fall back to raw bytes; we don't care
     # about format as long as len >= 32 bytes after decoding attempts.
-    for decoder in (bytes.fromhex, lambda s: base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))):
+    for decoder in (
+        bytes.fromhex,
+        lambda s: base64.urlsafe_b64decode(s + "=" * (-len(s) % 4)),
+    ):
         try:
             decoded = decoder(raw)
             if len(decoded) >= 32:
@@ -207,7 +220,8 @@ class GAConsoleLoginView(HomeAssistantView):
                 CONSOLE_LOGIN_SECRET_FILE,
             )
             return web.Response(
-                text="Console-login secret not provisioned yet.", status=503,
+                text="Console-login secret not provisioned yet.",
+                status=503,
             )
 
         # Pad base64url for the stdlib decoder.
@@ -250,7 +264,9 @@ class GAConsoleLoginView(HomeAssistantView):
         _prune_seen_nonces(now_ts)
         if nonce in _SEEN_NONCES:
             _LOGGER.warning(
-                "console-login: nonce %s replayed from %s", nonce, request.remote,
+                "console-login: nonce %s replayed from %s",
+                nonce,
+                request.remote,
             )
             return web.Response(text="Nonce already used.", status=409)
         _SEEN_NONCES[nonce] = now_ts
@@ -277,7 +293,9 @@ class GAConsoleLoginView(HomeAssistantView):
             refresh_token = await hass.auth.async_create_refresh_token(
                 target_user,
                 client_id=client_id,
-                access_token_expiration=timedelta(seconds=CONSOLE_LOGIN_ACCESS_TOKEN_TTL_S),
+                access_token_expiration=timedelta(
+                    seconds=CONSOLE_LOGIN_ACCESS_TOKEN_TTL_S
+                ),
             )
         except ValueError as e:
             # async_create_refresh_token raises on duplicate (user,client_id)
@@ -326,6 +344,8 @@ class GAConsoleLoginView(HomeAssistantView):
 </html>"""
         _LOGGER.info(
             "console-login: signed in user %s as %s (refresh_token %s)",
-            target_user.id, target_user.name, refresh_token.id,
+            target_user.id,
+            target_user.name,
+            refresh_token.id,
         )
         return web.Response(text=html, content_type="text/html")

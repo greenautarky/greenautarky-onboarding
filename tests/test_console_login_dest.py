@@ -23,10 +23,6 @@ compromised signer. Testing only the combination would let either rot unnoticed.
 
 from __future__ import annotations
 
-from pathlib import Path
-
-import pytest
-
 # Loaded BY PATH, not imported as `greenautarky_site.console_dest`: importing it
 # through the package would pull in `__init__.py`, which needs Home Assistant.
 # Loading the file on its own is also the assertion that this module really has
@@ -34,10 +30,15 @@ import pytest
 # the guard stops being testable in a second, which is the property worth
 # keeping.
 import importlib.util as _ilu
+from pathlib import Path
+
+import pytest
 
 _MOD_PATH = (
     Path(__file__).resolve().parent.parent
-    / "src" / "greenautarky_site" / "console_dest.py"
+    / "src"
+    / "greenautarky_site"
+    / "console_dest.py"
 )
 _spec = _ilu.spec_from_file_location("console_dest", _MOD_PATH)
 _console_dest = _ilu.module_from_spec(_spec)
@@ -49,22 +50,27 @@ _safe_dest = _console_dest.safe_dest
 
 # ─── accepted ──────────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("dest", [
-    "/",
-    "/config",
-    "/config/dashboard",
-    "/config/integrations",
-    "/lovelace/0",
-    "/developer-tools/state",
-    "/config/dashboard?x=1",
-    "/config/dashboard#anchor",
-])
+
+@pytest.mark.parametrize(
+    "dest",
+    [
+        "/",
+        "/config",
+        "/config/dashboard",
+        "/config/integrations",
+        "/lovelace/0",
+        "/developer-tools/state",
+        "/config/dashboard?x=1",
+        "/config/dashboard#anchor",
+    ],
+)
 def test_same_origin_paths_are_kept(dest):
     """A single-slash absolute path is exactly what a destination should be."""
     assert _safe_dest(dest) == dest
 
 
 # ─── rejected, each for its own reason ─────────────────────────────────
+
 
 def test_protocol_relative_is_rejected():
     """`//host` is THE open redirect: a browser reads it as a host, not a path,
@@ -80,13 +86,16 @@ def test_backslash_variant_is_rejected():
     assert _safe_dest("/\\evil.example") == CONSOLE_LOGIN_DEFAULT_DEST
 
 
-@pytest.mark.parametrize("dest", [
-    "https://evil.example/",
-    "http://evil.example/",
-    "javascript:alert(1)",
-    "data:text/html,<script>alert(1)</script>",
-    "vbscript:msgbox(1)",
-])
+@pytest.mark.parametrize(
+    "dest",
+    [
+        "https://evil.example/",
+        "http://evil.example/",
+        "javascript:alert(1)",
+        "data:text/html,<script>alert(1)</script>",
+        "vbscript:msgbox(1)",
+    ],
+)
 def test_schemes_are_rejected(dest):
     """Anything carrying a scheme leaves this origin — or, for javascript:,
     never was a location at all."""
@@ -100,7 +109,9 @@ def test_relative_and_empty_fall_back(dest):
     assert _safe_dest(dest) == CONSOLE_LOGIN_DEFAULT_DEST
 
 
-@pytest.mark.parametrize("dest", ["/config\n/evil", "/config\r\nX", "/con\x00fig", "/config\x7f"])
+@pytest.mark.parametrize(
+    "dest", ["/config\n/evil", "/config\r\nX", "/con\x00fig", "/config\x7f"]
+)
 def test_control_characters_are_rejected(dest):
     """No legitimate path contains them, and they are how a JS string context
     gets broken out of."""
@@ -114,6 +125,7 @@ def test_non_strings_fall_back(dest):
 
 
 # ─── the structural guarantee ──────────────────────────────────────────
+
 
 def test_dest_is_read_from_the_signed_payload_and_not_the_query_string():
     """The load-bearing one.
@@ -129,12 +141,20 @@ def test_dest_is_read_from_the_signed_payload_and_not_the_query_string():
     """
     src = (
         Path(__file__).resolve().parent.parent
-        / "src" / "greenautarky_site" / "console_login.py"
+        / "src"
+        / "greenautarky_site"
+        / "console_login.py"
     ).read_text()
     assert 'payload.get("dest")' in src, "dest must come from the signed payload"
-    for forbidden in ('query.get("dest")', "query['dest']", 'query.get("next")',
-                      'rel_url.query.get("dest")'):
-        assert forbidden not in src, f"dest must never be read from the query string ({forbidden})"
+    for forbidden in (
+        'query.get("dest")',
+        "query['dest']",
+        'query.get("next")',
+        'rel_url.query.get("dest")',
+    ):
+        assert forbidden not in src, (
+            f"dest must never be read from the query string ({forbidden})"
+        )
 
 
 def test_the_default_is_the_customer_view():
