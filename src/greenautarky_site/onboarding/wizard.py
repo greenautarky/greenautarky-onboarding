@@ -35,6 +35,26 @@ from .pin import _check_pin_verified, _pin_required
 
 _LOGGER = logging.getLogger(__name__)
 
+
+async def _async_user_for_username(hass: HomeAssistant, provider, username: str):
+    """The HA user that owns ``username``, or None.
+
+    Asked BEFORE creating anything. `async_get_or_create_credentials` would
+    happily mint a credential object for a name the provider does not know,
+    so the question has to be put to the provider's own user list.
+    """
+    try:
+        await provider.async_get_auth(username, "")
+    except InvalidUser:
+        return None
+    except Exception:  # noqa: BLE001 — a wrong password means the user EXISTS
+        pass
+    try:
+        creds = await provider.async_get_or_create_credentials({"username": username})
+    except InvalidUser:
+        return None
+    return await hass.auth.async_get_user_by_credentials(creds)
+
 def _check_not_completed(hass: HomeAssistant) -> web.Response | None:
     """Return a 403 response if onboarding is already completed."""
     state = _get_state(hass)
@@ -381,19 +401,62 @@ class GAOnboardingCreateUserView(HomeAssistantView):
             )
 
         # Create user in normal user group (not admin)
-        user = await hass.auth.async_create_user(name, group_ids=[GROUP_ID_USER])
-
-        # Create credentials via homeassistant auth provider
         provider = _async_get_hass_provider(hass)
         await provider.async_initialize()
-        try:
-            await provider.async_add_auth(username, password)
-        except InvalidUser:
-            return self.json_message("Username already exists", status_code=400)
-        credentials = await provider.async_get_or_create_credentials(
-            {"username": username}
-        )
-        await hass.auth.async_link_user(user, credentials)
+
+        # THE ACCOUNT STEP IS NOT A DEAD END, AND IT DOES NOT LEAK USERS.
+        #
+        # This used to create the HA user FIRST and then add the credential. A
+        # username that already existed raised InvalidUser, the handler
+        # returned 400 — and the user it had just created stayed behind,
+        # credential-less and invisible to the wizard. The panel offers no way
+        # past this step, so the resident could only press the button again,
+        # and every press left another orphan.
+        #
+        # Measured on a bench device 2026-08-27: FIVE attempts, THIRTEEN users
+        # named "resident", exactly one of them able to log in. The device sat
+        # at completed:false with "account" already in steps_done — set up, and
+        # locked out. A dropped connection while submitting is enough to reach
+        # that state.
+        #
+        # So: ask before creating, and if the credential already belongs to
+        # someone, ADOPT that user instead of failing. Onboarding is a flow a
+        # person walks once; it has to survive being walked twice.
+        existing_user = await _async_user_for_username(hass, provider, username)
+        if existing_user is not None:
+            _LOGGER.info(
+                "onboarding: %s already exists — continuing with the existing "
+                "account instead of failing the step",
+                username,
+            )
+            user = existing_user
+        else:
+            user = await hass.auth.async_create_user(name, group_ids=[GROUP_ID_USER])
+            try:
+                await provider.async_add_auth(username, password)
+            except Exception:
+                # Anything that stops the credential from being created must
+                # also undo the user, or the next attempt meets the wreckage of
+                # this one. A half-created account is worse than none: it is
+                # invisible in the wizard and blocks the step forever.
+                _LOGGER.exception(
+                    "onboarding: credential creation failed for %s — removing the "
+                    "user that was just created so the step can be retried",
+                    username,
+                )
+                try:
+                    await hass.auth.async_remove_user(user)
+                except Exception:
+                    _LOGGER.exception(
+                        "onboarding: could not remove the half-created user %s", user.id
+                    )
+                return self.json_message(
+                    "Could not create the account credential", status_code=400
+                )
+            credentials = await provider.async_get_or_create_credentials(
+                {"username": username}
+            )
+            await hass.auth.async_link_user(user, credentials)
 
         # Create a linked Person (guaranteed fleet-wide — ADR-0006).
         await _async_create_linked_person(hass, name, user.id)
