@@ -116,13 +116,48 @@ async def _async_ensure_person(hass: HomeAssistant) -> bool:
         return "person" in hass.config.components
 
 
+def _async_person_for_user(hass: HomeAssistant, user_id: str) -> dict | None:
+    """The Person already linked to ``user_id``, or None.
+
+    Reads the same storage collection ``async_create_person`` writes through,
+    so "does a Person exist" is answered by the authority rather than guessed.
+    """
+    try:
+        from homeassistant.components import person
+
+        data = hass.data.get(person.DOMAIN)
+        if not data or len(data) < 2:
+            return None
+        for item in data[1].async_items():
+            if item.get("user_id") == user_id:
+                return item
+    except Exception:  # an unreadable collection means "unknown", not "absent"
+        return None
+    return None
+
+
 async def _async_create_linked_person(hass: HomeAssistant, name: str, user_id: str) -> None:
     """Create an (empty) Person linked to ``user_id`` — best-effort, guaranteed
-    load first. Empty = no device_trackers → no location; presence stays opt-in."""
+    load first. Empty = no device_trackers → no location; presence stays opt-in.
+
+    Idempotent, and it has to be. HA's ``async_create_person`` raises
+    ``ValueError("User already taken")`` when a Person already links the user,
+    which turned the retried account step into a 500 the moment the user-side
+    of that step became re-entrant: adopting an existing user only to die one
+    line later is the same dead end with a different status code. Measured on
+    a bench device on 2026-08-27 — the unit suite could not have shown it,
+    because HA's person collection is the thing that raises.
+    """
     if not await _async_ensure_person(hass):
         _LOGGER.warning("person unavailable — sub-user %s created WITHOUT a linked Person", user_id)
         return
     from homeassistant.components import person
+
+    if (existing := _async_person_for_user(hass, user_id)) is not None:
+        _LOGGER.debug(
+            "person %s already links user %s — reusing it", existing.get("id"), user_id
+        )
+        return
 
     await person.async_create_person(hass, name, user_id=user_id)
 

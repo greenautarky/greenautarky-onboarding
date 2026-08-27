@@ -430,6 +430,14 @@ class GAOnboardingCreateUserView(HomeAssistantView):
                 username,
             )
             user = existing_user
+            # The credential is what the auth_code below is minted from, so it
+            # has to be bound on BOTH branches. It was not, and adopting the
+            # user therefore traded a 400 for an UnboundLocalError one screen
+            # later — the same dead end wearing a 500. `get_or_create` is the
+            # right call here precisely because it exists already.
+            credentials = await provider.async_get_or_create_credentials(
+                {"username": username}
+            )
         else:
             user = await hass.auth.async_create_user(name, group_ids=[GROUP_ID_USER])
             try:
