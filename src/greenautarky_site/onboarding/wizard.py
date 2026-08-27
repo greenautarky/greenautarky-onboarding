@@ -18,7 +18,7 @@ from urllib.parse import urlencode
 
 from aiohttp import web
 from homeassistant.auth.const import GROUP_ID_USER
-from homeassistant.auth.providers.homeassistant import InvalidUser
+from homeassistant.auth.providers.homeassistant import InvalidAuth, InvalidUser
 from homeassistant.components import frontend
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
@@ -424,9 +424,30 @@ class GAOnboardingCreateUserView(HomeAssistantView):
         # person walks once; it has to survive being walked twice.
         existing_user = await _async_user_for_username(hass, provider, username)
         if existing_user is not None:
+            # Adopting an account means handing out an auth_code for it, so the
+            # password has to be checked FIRST. Without this, everyone who gets
+            # past the physical PIN could sign in as an already-onboarded
+            # resident by typing their address — the retry fix would have
+            # traded a dead end for a way in. The legitimate case is someone
+            # re-submitting the form they just filled, so they have the
+            # password; a mismatch is a wrong password, not a dead end, and
+            # says so.
+            try:
+                await provider.async_validate_login(username, password)
+            except InvalidAuth:
+                _LOGGER.warning(
+                    "onboarding: %s already exists and the password did not "
+                    "match — refusing to adopt the account",
+                    username,
+                )
+                return self.json_message(
+                    "An account with this address already exists on this "
+                    "device. Enter its password to continue.",
+                    status_code=401,
+                )
             _LOGGER.info(
-                "onboarding: %s already exists — continuing with the existing "
-                "account instead of failing the step",
+                "onboarding: %s already exists and the password matched — "
+                "continuing with the existing account instead of failing the step",
                 username,
             )
             user = existing_user
