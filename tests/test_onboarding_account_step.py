@@ -33,7 +33,7 @@ from typing import Any
 
 import pytest
 
-from homeassistant.auth.providers import homeassistant as ha_auth_provider
+from homeassistant import auth
 
 from greenautarky_site.const import DOMAIN
 from greenautarky_site.onboarding.wizard import GAOnboardingCreateUserView
@@ -61,19 +61,19 @@ class _FakeRequest:
 
 
 async def _install_hass_auth_provider(hass) -> None:
-    """Give the test hass the `homeassistant` auth provider.
+    """Give the test hass a real `homeassistant` auth provider.
 
-    The view looks it up by type and raises RuntimeError when it is absent.
-    Without this the tests were red for that RuntimeError — red, and red for a
-    reason that says nothing about the defect under test.
+    Built through `auth_manager_from_config`, the documented entry point,
+    rather than by reaching into `hass.auth._providers` — that reached into an
+    attribute that is not what `auth_providers` reads, so the provider never
+    appeared and the tests stayed red on "provider not found" instead of on the
+    assertion they were written for.
     """
     if any(p.type == "homeassistant" for p in hass.auth.auth_providers):
         return
-    provider = ha_auth_provider.HassAuthProvider(
-        hass, hass.auth._store, {"type": "homeassistant"}
+    hass.auth = await auth.auth_manager_from_config(
+        hass, [{"type": "homeassistant"}], []
     )
-    await provider.async_initialize()
-    hass.auth._providers[(provider.type, provider.id)] = provider
 
 
 def _seed(hass) -> dict:
