@@ -14,16 +14,41 @@ could log in. The device sat at ``completed: false`` with "account" already in
 ``steps_done`` — set up, and locked out. A dropped connection while submitting
 is enough to reach that state; nobody has to do anything wrong.
 
-Two failures, asserted separately because they are different problems:
+Three failures, asserted separately because they are different problems:
 
   the ORPHAN     a retry must leave exactly one user, not two
   the DEAD END   a retry must not answer 400, because there is no other way on
+  the WAY IN     a retry must not adopt an account without its password
+
+The third is not optional. Fixing the first two means handing out an auth_code
+for an account the caller merely NAMED; without a password check the fix would
+trade a dead end for a way in. Asserted in this file rather than a separate
+one, so a future change that makes the retry "simpler" has to walk past it.
 
 Written to the pattern the rest of this suite uses: the view is called
 directly with a fake request, rather than standing the whole integration up.
-The first version of this file used ``async_setup_component`` and failed with
-"Integration not found" — red, and red for a reason that says nothing about
-the defect, which is not a red proof at all.
+
+WHY THIS FILE SPENT A DAY SKIPPED, and what that cost. It shipped with
+``pytestmark = pytest.mark.skip`` and a reason that named two blockers. One was
+real and one was wrong, and the wrong one is what kept it skipped:
+
+  * REAL — ``create_auth_code`` reads ``hass.data["auth"]``, and only the auth
+    COMPONENT puts it there. Installing the auth PROVIDER is not the same
+    thing. Without it every test here dies with ``KeyError: 'auth'`` AFTER the
+    code under test has already done its work, which reads exactly like the
+    defect and is not. The fix is two lines in the helper below.
+
+  * WRONG — "pytest-homeassistant-custom-component will not install on the
+    workstation". It installs in seconds. The real error was four levels down
+    in a subprocess's output: ``OSError: [Errno 28] No space left on device``.
+    /tmp is a 16 GB tmpfs and it was full. pip reports that as a
+    ModuleNotFoundError for the package it could not build, which is a
+    perfectly convincing story about incompatibility.
+
+Six attempts were spent guessing at the first blocker through CI, because the
+second was believed. Each guess cost a pipeline run instead of a fifth of a
+second. When an install fails for a package that plainly exists, check the disk
+before suspecting the package.
 """
 
 from __future__ import annotations
@@ -35,29 +60,6 @@ from homeassistant.setup import async_setup_component
 
 from greenautarky_site.const import DOMAIN
 from greenautarky_site.onboarding.wizard import GAOnboardingCreateUserView
-
-pytestmark = pytest.mark.skip(
-    reason=(
-        "The three assertions below are correct and the behaviour they describe "
-        "is fixed — but they cannot yet be made to FAIL for the right reason. "
-        "Building the homeassistant auth provider in this harness raises "
-        "KeyError: 'auth', so they are red on the harness rather than on the "
-        "defect, and a red for the wrong reason is not a red proof. Six attempts "
-        "were spent guessing at it through CI, because "
-        "pytest-homeassistant-custom-component will not install on the "
-        "workstation (bluetooth-data-tools needs a toolchain; a wheels-only "
-        "install does not resolve), so each attempt cost a pipeline run instead "
-        "of five seconds.\n\n"
-        "THE RED PROOF FOR THIS DEFECT EXISTS, on hardware: five presses of the "
-        "account button left THIRTEEN users named 'resident', exactly one able "
-        "to log in, on a device stuck at completed:false with 'account' already "
-        "in steps_done. That is what the fix addresses.\n\n"
-        "They are left here, skipped and visible, rather than deleted — so the "
-        "next person with a working HA test environment removes one line "
-        "instead of rediscovering the defect and writing them again. That is "
-        "the whole reason to keep a skipped test."
-    )
-)
 
 
 class _FakeStore:
@@ -91,6 +93,13 @@ async def _install_hass_auth_provider(hass) -> None:
     Copying a working recipe whole beats reasoning about which half matters.
     """
     await async_setup_component(hass, "person", {})
+    # The `auth` COMPONENT, not just the auth PROVIDER. `create_auth_code` —
+    # the last line of the view under test — reads `hass.data["auth"]`, and
+    # only `auth.async_setup` puts it there. Without it every one of these
+    # tests dies with `KeyError: 'auth'` AFTER the code under test has already
+    # done its work, which reads exactly like the defect and is not.
+    await async_setup_component(hass, "http", {})
+    await async_setup_component(hass, "auth", {})
     if any(p.type == "homeassistant" for p in hass.auth.auth_providers):
         return
     from homeassistant import auth as ha_auth
@@ -120,7 +129,11 @@ def _count(hass, name: str) -> int:
     return len([u for u in hass.auth._store._users.values() if u.name == name])
 
 
-async def _post(hass, username: str, name: str = "Resident"):
+#: What every account in this file is created with, unless a test says otherwise.
+THE_USUAL = "hunter2-abcdef"
+
+
+async def _post(hass, username: str, name: str = "Resident", secret: str = THE_USUAL):
     return await GAOnboardingCreateUserView().post(
         _FakeRequest(
             hass,
@@ -128,7 +141,7 @@ async def _post(hass, username: str, name: str = "Resident"):
                 "client_id": "http://localhost:8123/",
                 "name": name,
                 "username": username,
-                "password": "hunter2-abcdef",
+                "password": secret,
             },
         )
     )
@@ -189,3 +202,57 @@ async def test_a_different_username_still_creates_a_second_account(hass) -> None
 
     assert _count(hass, "One") == 1
     assert _count(hass, "Two") == 1
+
+
+@pytest.mark.asyncio
+async def test_adopting_an_account_requires_its_password(hass) -> None:
+    """The security half of the retry fix, and it has to live next to it.
+
+    Making the step re-entrant means handing out an auth_code for an account
+    the caller merely NAMED. Without a password check that would trade a dead
+    end for a way in: everyone past the physical PIN could sign in as an
+    already-onboarded resident by typing their address, for as long as
+    onboarding stayed incomplete — which is exactly the state the retry fix
+    exists to make survivable.
+
+    The two have to be asserted together or the fix for one silently undoes
+    the other. That is why this is not in a separate file: a future change
+    that makes the retry "simpler" has to walk past this test to do it.
+
+    Measured on a bench device on 2026-08-27: wrong secret 401 and no
+    adoption, right secret 200 and no new user.
+    """
+    await _install_hass_auth_provider(hass)
+    _seed(hass)
+    await _post(hass, "resident@example.invalid")
+    assert _count(hass, "Resident") == 1
+
+    refused = await _post(hass, "resident@example.invalid", secret="not-the-one")
+
+    assert refused.status == 401, (
+        f"an existing account was adopted on a {refused.status} without its "
+        "password; the retry fix would then be a way in, not a way through"
+    )
+    assert _count(hass, "Resident") == 1, "a refusal must not create anything"
+
+
+@pytest.mark.asyncio
+async def test_the_right_password_still_adopts(hass) -> None:
+    """The positive control for the check above.
+
+    A guard that can only ever refuse is the same as a step nobody can pass.
+    This is the assertion that would catch a password check written so
+    strictly that the legitimate retry — the one this whole file is about —
+    stops working.
+    """
+    await _install_hass_auth_provider(hass)
+    _seed(hass)
+    await _post(hass, "resident@example.invalid")
+
+    again = await _post(hass, "resident@example.invalid")
+
+    assert again.status == 200, (
+        f"the account step answered {again.status} to a retry with the correct "
+        "password — the dead end is back"
+    )
+    assert _count(hass, "Resident") == 1
