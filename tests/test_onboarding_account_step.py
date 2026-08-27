@@ -33,6 +33,8 @@ from typing import Any
 
 import pytest
 
+from homeassistant.auth.providers import homeassistant as ha_auth_provider
+
 from greenautarky_site.const import DOMAIN
 from greenautarky_site.onboarding.wizard import GAOnboardingCreateUserView
 
@@ -56,6 +58,22 @@ class _FakeRequest:
 
     def __getitem__(self, key: str) -> Any:
         return self._items[key]
+
+
+async def _install_hass_auth_provider(hass) -> None:
+    """Give the test hass the `homeassistant` auth provider.
+
+    The view looks it up by type and raises RuntimeError when it is absent.
+    Without this the tests were red for that RuntimeError — red, and red for a
+    reason that says nothing about the defect under test.
+    """
+    if any(p.type == "homeassistant" for p in hass.auth.auth_providers):
+        return
+    provider = ha_auth_provider.HassAuthProvider(
+        hass, hass.auth._store, {"type": "homeassistant"}
+    )
+    await provider.async_initialize()
+    hass.auth._providers[(provider.type, provider.id)] = provider
 
 
 def _seed(hass) -> dict:
@@ -100,6 +118,7 @@ async def test_creating_the_account_twice_leaves_exactly_one_user(hass) -> None:
     created one, failed to add the credential, and returned 400 without
     removing it. Thirteen accumulated on a real device.
     """
+    await _install_hass_auth_provider(hass)
     _seed(hass)
     await _post(hass, "resident@example.invalid")
     assert _count(hass, "Resident") == 1
@@ -119,6 +138,7 @@ async def test_the_account_step_is_not_a_dead_end(hass) -> None:
     the panel had nothing else to offer, so onboarding could never complete on
     a device whose account step had half-succeeded.
     """
+    await _install_hass_auth_provider(hass)
     _seed(hass)
     await _post(hass, "twice@example.invalid")
     again = await _post(hass, "twice@example.invalid")
@@ -138,6 +158,7 @@ async def test_a_different_username_still_creates_a_second_account(hass) -> None
     above and break onboarding entirely. Adopting an existing account must not
     become never creating one.
     """
+    await _install_hass_auth_provider(hass)
     _seed(hass)
     await _post(hass, "one@example.invalid", name="One")
     await _post(hass, "two@example.invalid", name="Two")
