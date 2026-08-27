@@ -1,3 +1,25 @@
+## 2.4.0
+
+### fix(onboarding): the account step is a dead end that leaks users
+
+Two failures in one handler, both reachable by a dropped connection.
+
+**The orphan.** `async_create_user` ran before `async_add_auth`. When the
+username already existed the handler returned 400 and left the user it had just
+created standing — credential-less, invisible to the wizard, counted by
+nothing. Anything that stops the credential now also removes that user.
+
+**The dead end.** The panel offers no way past the account step, so a resident
+whose first attempt half-succeeded could only press the button again, and the
+server answered 400 every time. If the username already belongs to someone, the
+step now adopts that account and continues.
+
+Measured on a bench device 2026-08-27: five attempts, thirteen users named
+"resident", exactly one able to log in, and the device stuck at
+`completed: false` with `account` already in `steps_done` — set up and locked
+out. Onboarding is a flow a person walks once; it has to survive being walked
+twice.
+
 ## 2.3.0 — 2026-08-25
 
 ### Added
