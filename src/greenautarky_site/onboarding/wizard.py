@@ -47,7 +47,7 @@ async def _async_user_for_username(hass: HomeAssistant, provider, username: str)
         await provider.async_get_auth(username, "")
     except InvalidUser:
         return None
-    except Exception:  # noqa: BLE001 — a wrong password means the user EXISTS
+    except Exception:  # a wrong password still means the user EXISTS
         pass
     try:
         creds = await provider.async_get_or_create_credentials({"username": username})

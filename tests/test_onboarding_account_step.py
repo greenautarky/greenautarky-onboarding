@@ -32,6 +32,7 @@ import json
 from typing import Any
 
 import pytest
+from homeassistant.setup import async_setup_component
 
 from greenautarky_site.const import DOMAIN
 from greenautarky_site.onboarding.wizard import GAOnboardingCreateUserView
@@ -58,18 +59,16 @@ class _FakeRequest:
         return self._items[key]
 
 
-async def _install_hass_auth_provider(hass, hass_storage) -> None:
-    """Give the test hass a real `homeassistant` auth provider.
+async def _install_hass_auth_provider(hass) -> None:
+    """Copied verbatim from test_sub_user_join.py, which does this and works.
 
-    Copied from test_sub_user_join.py, which does the same thing and works,
-    plus one addition: the mocked storage is seeded with an empty `auth` entry
-    first. Without it `AuthStore.async_load` raises KeyError: 'auth' — the
-    other suite happens to set up the `person` component beforehand, which
-    populates it as a side effect. Depending on that side effect is how a test
-    passes in one file and fails in another for reasons neither file mentions.
+    Including the `person` setup that suite performs first: without it
+    `auth_manager_from_config` fails with KeyError: 'auth', because the mocked
+    storage has no such entry until something populates it. Seeding the entry
+    by hand did NOT help — the dependency is on the setup, not on the key.
+    Copying a working recipe whole beats reasoning about which half matters.
     """
-    hass_storage.setdefault("auth", {"version": 1, "data": {
-        "users": [], "groups": [], "credentials": [], "refresh_tokens": []}})
+    await async_setup_component(hass, "person", {})
     if any(p.type == "homeassistant" for p in hass.auth.auth_providers):
         return
     from homeassistant import auth as ha_auth
@@ -114,14 +113,14 @@ async def _post(hass, username: str, name: str = "Resident"):
 
 
 @pytest.mark.asyncio
-async def test_creating_the_account_twice_leaves_exactly_one_user(hass, hass_storage) -> None:
+async def test_creating_the_account_twice_leaves_exactly_one_user(hass) -> None:
     """The orphan half.
 
     Before the fix this left TWO users named Resident: the second attempt
     created one, failed to add the credential, and returned 400 without
     removing it. Thirteen accumulated on a real device.
     """
-    await _install_hass_auth_provider(hass, hass_storage)
+    await _install_hass_auth_provider(hass)
     _seed(hass)
     await _post(hass, "resident@example.invalid")
     assert _count(hass, "Resident") == 1
@@ -134,14 +133,14 @@ async def test_creating_the_account_twice_leaves_exactly_one_user(hass, hass_sto
 
 
 @pytest.mark.asyncio
-async def test_the_account_step_is_not_a_dead_end(hass, hass_storage) -> None:
+async def test_the_account_step_is_not_a_dead_end(hass) -> None:
     """The lock-out half.
 
     Before the fix the second call answered 400 "Username already exists" and
     the panel had nothing else to offer, so onboarding could never complete on
     a device whose account step had half-succeeded.
     """
-    await _install_hass_auth_provider(hass, hass_storage)
+    await _install_hass_auth_provider(hass)
     _seed(hass)
     await _post(hass, "twice@example.invalid")
     again = await _post(hass, "twice@example.invalid")
@@ -154,14 +153,14 @@ async def test_the_account_step_is_not_a_dead_end(hass, hass_storage) -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_different_username_still_creates_a_second_account(hass, hass_storage) -> None:
+async def test_a_different_username_still_creates_a_second_account(hass) -> None:
     """The must-pass half.
 
     A fix that simply refused to create anything would satisfy both assertions
     above and break onboarding entirely. Adopting an existing account must not
     become never creating one.
     """
-    await _install_hass_auth_provider(hass, hass_storage)
+    await _install_hass_auth_provider(hass)
     _seed(hass)
     await _post(hass, "one@example.invalid", name="One")
     await _post(hass, "two@example.invalid", name="Two")
