@@ -36,7 +36,6 @@ from homeassistant.setup import async_setup_component
 from greenautarky_site.const import DOMAIN
 from greenautarky_site.onboarding.wizard import GAOnboardingCreateUserView
 
-
 pytestmark = pytest.mark.skip(
     reason=(
         "The three assertions below are correct and the behaviour they describe "
