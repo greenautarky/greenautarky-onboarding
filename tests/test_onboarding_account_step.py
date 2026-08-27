@@ -28,7 +28,6 @@ the defect, which is not a red proof at all.
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 import pytest
