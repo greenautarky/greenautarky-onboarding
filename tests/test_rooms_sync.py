@@ -19,6 +19,7 @@ from typing import Any
 import pytest
 from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import label_registry as lr
 
 from greenautarky_site.const import DOMAIN
 from greenautarky_site.rooms_sync import STATE_KEY, GARoomsSyncView
@@ -121,9 +122,9 @@ async def test_adopts_the_seeded_default_rooms_instead_of_duplicating_them(hass)
 
 
 async def test_a_new_room_gets_the_type_as_its_area_id(hass):
-    """area_kind is derived from area_id alone. If a German name produced
-    area_id='badezimmer', that room's type would read as 'custom' fleet-wide,
-    forever — the id is fixed at creation."""
+    """LEGACY CONTRACT, kept green on purpose. Before 2.5.0 `type` was the
+    area_id, and a pre-2.5.0 GACI still sends it. It must keep behaving exactly
+    as it did — the new `ref`/`kind` split is additive, not a flag day."""
     _seed(hass)
     resp = await _post(hass, {"rooms": [{"name": "Badezimmer", "type": "bathroom"}]})
 
@@ -294,3 +295,143 @@ async def test_the_response_carries_no_pseudonym(hass):
     resp = await _post(hass, {"rooms": [{"name": "Wohnzimmer", "type": "living_room"}]})
     assert "area_ref" not in _body(resp)["rooms"][0]
     assert "area_id" in _body(resp)["rooms"][0]
+
+
+# ─── identity split from type (KB #224) ──────────────────────────────────
+
+
+async def test_two_rooms_of_one_kind_stay_two_rooms(hass, config_entry):
+    """THE regression. With `type` as the id, a flat with two bedrooms produced
+    ONE area named after the last room, holding both rooms' devices, at HTTP
+    200 with no warning. Distinct refs make it expressible."""
+    _seed(hass)
+    _add_zigbee_device(hass, IEEE_A)
+    _add_zigbee_device(hass, IEEE_B)
+
+    resp = await _post(hass, {"rooms": [
+        {"ref": "room_1a5", "kind": "bedroom",
+         "name": "Schlafzimmer Eltern", "members": [IEEE_A]},
+        {"ref": "room_1a6", "kind": "bedroom",
+         "name": "Schlafzimmer Kind", "members": [IEEE_B]},
+    ]})
+    assert resp.status == 200
+    rooms = _body(resp)["rooms"]
+    assert [r["area_id"] for r in rooms] == ["room_1a5", "room_1a6"]
+
+    registry = ar.async_get(hass)
+    assert len(registry.async_list_areas()) == 2
+    placed = {d.name: d.area_id for d in dr.async_get(hass).devices.values()}
+    assert placed[f"sensor {IEEE_A}"] == "room_1a5"
+    assert placed[f"sensor {IEEE_B}"] == "room_1a6"
+
+
+async def test_the_kind_lands_as_a_label_whose_id_ga_manager_can_match(hass):
+    """ga_manager matches `label_id` against its pinned catalogue, so the ID is
+    the load-bearing half — not the label's display name."""
+    _seed(hass)
+    await _post(hass, {"rooms": [
+        {"ref": "room_1a5", "kind": "bedroom", "name": "Schlafzimmer Eltern"},
+    ]})
+    area = ar.async_get(hass).async_get_area("room_1a5")
+    assert area.labels == {"bedroom"}
+    assert lr.async_get(hass).async_get_label("bedroom").name == "Bedroom"
+
+
+async def test_kind_name_translates_the_label_without_moving_its_id(hass):
+    """The resident reads "Schlafzimmer"; ga_manager still matches `bedroom`.
+    Same two-step as areas, because labels share the id-generation base class."""
+    _seed(hass)
+    await _post(hass, {"rooms": [
+        {"ref": "room_1a5", "kind": "bedroom", "kind_name": "Schlafzimmer",
+         "name": "Schlafzimmer Eltern"},
+    ]})
+    label = lr.async_get(hass).async_get_label("bedroom")
+    assert label.label_id == "bedroom", "the id ga_manager matches on"
+    assert label.name == "Schlafzimmer", "what the resident reads"
+    assert ar.async_get(hass).async_get_area("room_1a5").labels == {"bedroom"}
+
+
+async def test_a_room_without_a_kind_gets_no_label(hass):
+    """A room GACI could not classify must not invent one."""
+    _seed(hass)
+    await _post(hass, {"rooms": [{"ref": "room_1a9", "name": "Papas Zimmer"}]})
+    assert ar.async_get(hass).async_get_area("room_1a9").labels == set()
+    assert list(lr.async_get(hass).async_list_labels()) == []
+
+
+# ─── the sweep ───────────────────────────────────────────────────────────
+
+
+async def test_the_first_sync_sweeps_the_empty_rooms_core_seeded(hass):
+    """HA Core's own onboarding creates Living Room / Kitchen / Bedroom and that
+    cannot be switched off. Ref-only matching never adopts them, so the first
+    sync clears them — after creating, so the registry is never empty and
+    site_defaults cannot re-seed into the gap."""
+    _seed(hass)
+    _seed_default_areas(hass)
+    assert len(ar.async_get(hass).async_list_areas()) == 3
+
+    resp = await _post(hass, {"rooms": [
+        {"ref": "room_1a4", "kind": "living_room", "name": "Wohnzimmer"},
+    ]})
+    assert _body(resp)["swept"] == 3
+    assert [(a.id, a.name) for a in ar.async_get(hass).async_list_areas()] == [
+        ("room_1a4", "Wohnzimmer")
+    ]
+
+
+async def test_the_sweep_never_touches_a_room_that_holds_a_device(hass, config_entry):
+    """The guard that makes it safe rather than a `replace` in disguise."""
+    _seed(hass)
+    _seed_default_areas(hass)
+    device = _add_zigbee_device(hass, IEEE_A)
+    dr.async_get(hass).async_update_device(device.id, area_id="kitchen")
+
+    resp = await _post(hass, {"rooms": [
+        {"ref": "room_1a4", "kind": "living_room", "name": "Wohnzimmer"},
+    ]})
+    assert _body(resp)["swept"] == 2, "living_room + bedroom, never kitchen"
+    assert ar.async_get(hass).async_get_area("kitchen") is not None
+
+
+async def test_a_later_sync_does_not_sweep_a_room_the_resident_created(hass):
+    """The reason the sweep is first-sync-only. Once a resident exists, an
+    EMPTY room may be one they just made and have not filled yet."""
+    _seed(hass)
+    await _post(hass, {"rooms": [{"ref": "room_1a4", "name": "Wohnzimmer"}]})
+    ar.async_get(hass).async_create("Hobbyraum")          # resident, still empty
+
+    resp = await _post(hass, {"rooms": [{"ref": "room_1a4", "name": "Wohnzimmer"}]})
+    assert _body(resp)["swept"] == 0
+    names = {a.name for a in ar.async_get(hass).async_list_areas()}
+    assert "Hobbyraum" in names
+
+
+async def test_a_lost_ref_map_re_adopts_instead_of_duplicating(hass):
+    """Self-healing, and the reason the ref IS the area_id rather than a row in
+    a mapping table: lose the store, keep the registry, and the rooms are still
+    identifiable. A mapping table would have orphaned them and built duplicates
+    beside them."""
+    _seed(hass)
+    await _post(hass, {"rooms": [{"ref": "room_1a4", "name": "Wohnzimmer"}]})
+
+    state = _seed(hass)                                   # store wiped, registry intact
+    resp = await _post(hass, {"rooms": [{"ref": "room_1a4", "name": "Wohnzimmer"}]})
+
+    rooms = _body(resp)["rooms"]
+    assert rooms[0]["created"] is False and rooms[0]["matched_on"] == "id"
+    assert len(ar.async_get(hass).async_list_areas()) == 1
+    assert state[STATE_KEY] == {"room_1a4": "Wohnzimmer"}
+
+
+async def test_a_resident_rename_survives_a_lost_ref_map_check(hass):
+    """The re-adopt above must not become a way to overwrite a rename: with the
+    map present, the resident's name stands (already covered), and the re-adopt
+    only fires when the map is ABSENT."""
+    _seed(hass)
+    await _post(hass, {"rooms": [{"ref": "room_1a4", "name": "Wohnzimmer"}]})
+    ar.async_get(hass).async_update("room_1a4", name="Salon")
+
+    resp = await _post(hass, {"rooms": [{"ref": "room_1a4", "name": "Wohnzimmer"}]})
+    assert _body(resp)["rooms"][0]["renamed_by_resident"] is True
+    assert ar.async_get(hass).async_get_area("room_1a4").name == "Salon"
