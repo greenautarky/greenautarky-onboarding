@@ -1,3 +1,44 @@
+## 2.5.0
+
+### feat(rooms): split a room's identity from its type — `ref` + `kind`
+
+`type` was doing two jobs at once: it CLASSIFIED a room and it was used verbatim
+as the Home Assistant `area_id`. area_ids are unique, so a flat with two
+bedrooms could not be expressed — the second overwrote the first, both rooms'
+sensors landed in one area, and the endpoint answered 200 with no warning and no
+test covering it.
+
+`ref` now identifies (opaque, stable, becomes the area_id) and `kind`
+classifies (a catalogue slug, carried as an HA label that ga_manager reads).
+`kind_name` carries a human title only where the device's own derivation would
+get it wrong. Backward compatible: `type` still means ref AND kind at once, so
+nothing that works today breaks.
+
+Three further changes that come with it, each because the old behaviour tied
+identity to something that moves:
+
+* **`_find_area` matches by ref only.** The name fallback made a room's identity
+  depend on whatever the installer typed, so a rename could split one room into
+  two or merge two into one.
+* **The first sync sweeps the areas HA Core seeds by itself.** It runs AFTER
+  creating, so the registry is never empty and `site_defaults` cannot re-seed
+  into the gap. It is not `replace`: at first sync no resident exists, so
+  nothing empty can be theirs. A room holding a device is never swept.
+* **A lost ref map re-adopts instead of duplicating**, and a resident's rename
+  survives that re-adoption.
+
+Re-measured by the integrator rather than taken on trust: 9 tests fail against
+the unchanged source — the ones describing two-rooms-of-one-kind, the label
+carrier, the first-sync sweep and the re-adoption — and 181 pass with the
+change.
+
+`site_defaults.async_seed_default_areas` was deliberately NOT deleted. It looks
+like dead code because Core seeds first on a fresh flash, but the tenant wipe
+clears `core.area_registry` while leaving `.storage/onboarding` marked done — so
+after a reset Core does not re-seed and the GA seeder is the only one that runs.
+Removing it would have reintroduced the documented "a reset device came back
+with ZERO rooms" defect.
+
 ## 2.4.0
 
 ### fix(onboarding): the account step is a dead end that leaks users
