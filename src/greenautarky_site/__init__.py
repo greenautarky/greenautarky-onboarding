@@ -220,7 +220,7 @@ async def _async_setup_common(hass: HomeAssistant) -> bool:
     # worth failing setup over.
     try:
         await instance_id.async_get(hass)
-    except Exception:  # noqa: BLE001 - best-effort; setup must not fail on it
+    except Exception:  # best-effort; setup must not fail on the instance id
         _LOGGER.warning(
             "could not ensure the HA instance id (core.uuid); cloud telemetry "
             "may lack a device identity until it is created"
