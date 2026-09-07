@@ -53,6 +53,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 from homeassistant.core import CoreState, Event, HomeAssistant
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import instance_id
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.typing import ConfigType
 
@@ -209,6 +210,21 @@ async def _async_setup_common(hass: HomeAssistant) -> bool:
     """
     if DOMAIN in hass.data:
         return True
+
+    # #762: the device's cloud identity (the default add-on) resolves its
+    # device_id from HA's instance id (.storage/core.uuid), which HA writes
+    # only lazily the first time something asks for it — and on a GA device
+    # nothing asks, so a fresh, fully-onboarded device shipped telemetry with
+    # no device_id at all (measured on K31, 2026-09-04). Ask for it here, on
+    # every setup, so core.uuid always exists. Best-effort: identity is not
+    # worth failing setup over.
+    try:
+        await instance_id.async_get(hass)
+    except Exception:  # best-effort; setup must not fail on the instance id
+        _LOGGER.warning(
+            "could not ensure the HA instance id (core.uuid); cloud telemetry "
+            "may lack a device identity until it is created"
+        )
 
     # Use the migration-aware Store subclass — without it any state file
     # written by a prior version (v1) crashes setup with NotImplementedError

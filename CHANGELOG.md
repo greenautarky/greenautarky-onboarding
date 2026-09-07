@@ -1,3 +1,23 @@
+## 2.6.0
+
+### fix(setup): ensure `core.uuid` exists so a fresh device has an identity
+
+Home Assistant creates `core.uuid` lazily — only the first time something calls
+`instance_id.async_get()`. Nothing on a GA device ever asked, so a freshly
+flashed, fully onboarded device shipped cloud telemetry with an EMPTY instance
+id: all three identity sources (`core.uuid`, the HA analytics id, the reported
+device id) came back blank, and the device was invisible under its own identity
+in the fleet backends.
+
+Setup now calls `instance_id.async_get(hass)` once in `_async_setup_common`,
+right after the component decides it is the first load. That is the earliest GA
+code that runs on every device, so the id is materialised before anything reads
+it. The call is best-effort: if it raises, setup logs a warning and continues —
+a missing instance id must never be able to stop the component coming up.
+
+Guarded by two tests: one asserts setup requests the instance id (so `core.uuid`
+gets created), one asserts setup still succeeds if the request fails.
+
 ## 2.5.0
 
 ### feat(rooms): split a room's identity from its type — `ref` + `kind`
