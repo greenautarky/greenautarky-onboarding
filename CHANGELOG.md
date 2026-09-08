@@ -1,3 +1,17 @@
+## 2.7.0
+
+### fix(dashboards): restrict an unassigned personal dashboard to masters (fail closed)
+
+The per-view visibility reconcile now fails closed for a storage dashboard with no
+`sub_user_dashboards` assignment. With no assignment the owner is unknown, so on a
+managed device (masters configured) the board is visible to masters only — who can
+reassign it — and a scoped resident sees a board only when it is explicitly assigned
+to them. On an unmanaged device (no masters) visibility is left open, so the device's
+sole user keeps access to their own board.
+
+Tests: the reconcile test asserts the unassigned board is masters-only; a new test
+pins the unmanaged-device carve-out.
+
 ## 2.6.0
 
 ### fix(setup): ensure `core.uuid` exists so a fresh device has an identity
