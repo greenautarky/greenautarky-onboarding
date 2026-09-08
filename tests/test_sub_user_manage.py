@@ -284,7 +284,9 @@ async def test_assign_dashboard_reconciles_visibility(hass) -> None:
         assert kid.id in users  # assigned sub-user sees it
         assert master.id in users  # master keeps visibility
 
-    # Unassign → ``visible`` stripped (visible to all again).
+    # Unassign → fail CLOSED: with a master present the board is restricted to masters
+    # only (the master can reassign it). An unassigned personal board is not shown to
+    # arbitrary users.
     await GASubUserAssignDashboardView().post(
         _FakeRequest(
             hass,
@@ -293,7 +295,33 @@ async def test_assign_dashboard_reconciles_visibility(hass) -> None:
         )
     )
     cfg2 = await dash.async_load(False)
-    assert all("visible" not in v for v in cfg2["views"])
+    for view in cfg2["views"]:
+        users = {v["user"] for v in view["visible"]}
+        assert users == {master.id}, f"unassigned board must be masters-only, got {users}"
+    assert kid.id not in {
+        v["user"] for view in cfg2["views"] for v in view.get("visible", [])
+    }, "the un-assigned sub-user must no longer see the board"
+
+
+@pytest.mark.asyncio
+async def test_unassigned_board_on_unmanaged_device_stays_visible_to_all(hass) -> None:
+    """Fail-closed must not blank an UNMANAGED device. With no masters configured,
+    an unassigned board keeps ``visible`` stripped so the device's lone user still
+    sees their own board — hiding it (masters-only) would leave nobody able to see it."""
+    from greenautarky_site.household.dashboards_admin import (
+        _reconcile_dashboard_visibility,
+    )
+
+    _seed(hass)  # no masters, no sub-users -> unmanaged
+    dash = _inject_storage_dashboard(hass)
+    await dash.async_save(
+        {"views": [{"title": "V1", "visible": [{"user": "stale"}]}]}
+    )
+    await _reconcile_dashboard_visibility(hass, "family", hass.data[DOMAIN]["state"])
+    cfg = await dash.async_load(False)
+    assert all(
+        "visible" not in v for v in cfg["views"]
+    ), "an unmanaged device must leave an unassigned board visibility open"
 
 
 @pytest.mark.asyncio
