@@ -108,7 +108,7 @@ def _filter_result(hass: HomeAssistant, user: Any, shape: str, result: Any) -> A
             permitted = _permitted_entities(hass, user)
             ent_reg = er.async_get(hass)
             dev_reg = dr.async_get(hass)
-            dev_area = {d.id: d.area_id for d in dev_reg.devices.values()}
+            dev_area = {d.id: d.area_id for d in dev_reg.devices}
             keep = set()
             for e in ent_reg.entities.values():
                 if e.entity_id in permitted:

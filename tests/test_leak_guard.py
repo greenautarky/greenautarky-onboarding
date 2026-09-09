@@ -414,6 +414,8 @@ async def test_filter_path_holds_the_invariant_on_a_real_connection(hass):
     conn = ActiveConnection(
         logging.getLogger(__name__), hass, sent.append, user,
         types.SimpleNamespace(id="refresh-token-id"),
+        # Core 2026 added `remote` (the client address) to the signature.
+        None,
     )
 
     handler(hass, conn, {"id": 1, "type": "config/area_registry/list"})
@@ -454,6 +456,8 @@ async def test_filter_failure_sends_an_empty_result_instead_of_crashing(hass, mo
     conn = ActiveConnection(
         logging.getLogger(__name__), hass, sent.append, _user(groups=["ga_scope_x"]),
         types.SimpleNamespace(id="refresh-token-id"),
+        # Core 2026 added `remote` (the client address) to the signature.
+        None,
     )
     handler(hass, conn, {"id": 1, "type": "config/area_registry/list"})
     await hass.async_block_till_done()

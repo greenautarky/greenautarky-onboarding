@@ -1,13 +1,15 @@
 [project]
 name = "greenautarky-site"
-version = "2.7.0"
+version = "2.8.0"
 description = "GreenAutarky tenant onboarding wizard for Home Assistant — PIN-gated setup flow, GDPR consent, password reset, signed-token operator auto-login"
 authors = [{name = "Thomas Taube", email = "thomas@greenautarky.com"}]
 license = {text = "Proprietary"}
-requires-python = ">=3.13"
+requires-python = ">=3.14"
 dependencies = [
     # Runtime deps shipped via Home Assistant. The integration assumes a
-    # Home Assistant 2025.11+ host; do NOT pin homeassistant as a dep here
+    # Home Assistant 2026.3+ host (every Core from 2026.3.0 requires Python
+    # >= 3.14.2, which is why requires-python is 3.14); do NOT pin
+    # homeassistant as a dep here
     # (custom_components ship inside HA's runtime, not as a standalone pkg).
     # The aiohttp / voluptuous / lit-related libs we use are all already
     # part of HA's wheel set.

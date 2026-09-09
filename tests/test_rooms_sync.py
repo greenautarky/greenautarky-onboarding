@@ -320,7 +320,7 @@ async def test_two_rooms_of_one_kind_stay_two_rooms(hass, config_entry):
 
     registry = ar.async_get(hass)
     assert len(registry.async_list_areas()) == 2
-    placed = {d.name: d.area_id for d in dr.async_get(hass).devices.values()}
+    placed = {d.name: d.area_id for d in dr.async_get(hass).devices}
     assert placed[f"sensor {IEEE_A}"] == "room_1a5"
     assert placed[f"sensor {IEEE_B}"] == "room_1a6"
 
