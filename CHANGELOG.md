@@ -1,3 +1,31 @@
+## 2.8.0
+
+### feat(core): target Home Assistant 2026.x, and prove it in CI
+
+The component now targets Core 2026.x only. Legacy support is dropped
+deliberately: the fleet moves to a current Core and the devices are replaced,
+so carrying a second Core generation costs maintenance and buys nothing.
+
+`device_registry.devices` may no longer be used as a mapping. Core reports the
+old use through `report_usage` and removes it in 2027.9, so the three call
+sites — `rooms_sync`, `scoping/leak_guard`, `scoping/entity_scope` — now
+iterate the registry, which yields the device entries directly. That single
+change took the suite on Core 2026.9.1 from 36 failures to 3.
+
+`ActiveConnection` gained a `remote` argument in Core 2026, which the two leak
+guard tests pass explicitly. They construct the real connection on purpose — a
+mock would prove nothing about the handler they exercise — so the constructor
+is followed rather than replaced.
+
+CI runs on Python 3.14 and asserts the resolved Core is at least 2026.3.
+That gate is the point of the change: `homeassistant` is resolved transitively
+through `pytest-homeassistant-custom-component`, and on Python 3.13 pip walks
+silently back to 2026.2.3, because every Core from 2026.3.0 requires Python
+>= 3.14.2. Without the assertion the suite passes green over a Core we do not
+ship — which is what it had been doing.
+
+Measured: 184 passed, 3 skipped on Home Assistant 2026.9.1 / Python 3.14.7.
+
 ## 2.7.0
 
 ### fix(dashboards): restrict an unassigned personal dashboard to masters (fail closed)

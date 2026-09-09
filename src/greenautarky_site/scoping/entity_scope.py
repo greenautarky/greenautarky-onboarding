@@ -80,7 +80,7 @@ def compile_entities(hass: HomeAssistant, area_ids: set[str]) -> set[str]:
         return set()
     ent_reg = er.async_get(hass)
     dev_reg = dr.async_get(hass)
-    dev_area = {d.id: d.area_id for d in dev_reg.devices.values()}
+    dev_area = {d.id: d.area_id for d in dev_reg.devices}
     return {
         ent.entity_id
         for ent in ent_reg.entities.values()

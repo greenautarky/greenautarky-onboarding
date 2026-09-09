@@ -112,7 +112,7 @@ def _seed_name(slug: str) -> str:
 def _ieee_index(hass: HomeAssistant) -> dict[str, str]:
     """{ieee (lowercase): HA device_id} for every Zigbee device in the registry."""
     out: dict[str, str] = {}
-    for device in dr.async_get(hass).devices.values():
+    for device in dr.async_get(hass).devices:
         for pair in device.identifiers:
             # Identifiers are (domain, value) tuples. Scan the whole pair rather
             # than assuming a domain, so a future integration rename does not
