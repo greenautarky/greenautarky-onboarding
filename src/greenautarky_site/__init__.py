@@ -44,6 +44,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 
 from aiohttp import web
 from homeassistant.components import frontend, panel_custom
@@ -642,6 +643,32 @@ async def _async_register_panel(hass: HomeAssistant) -> None:
     )
 
 
+_WIZARD_SETUP_PATH = "/greenautarky-setup.html"
+
+# The device label's QR code encodes
+#   http://<prefix>.ki-butler.greenautarky.com/?pin=<pin>&device=<id>
+# and the setup panel reads exactly these two back out of `window.location`
+# (ha-panel-greenautarky-setup.ts): `pin` auto-fills the six digits, `device`
+# names the unit, and the panel then clears both from the address bar.
+# Redirecting `/` to a bare path throws them away, so a customer who scanned
+# the QR code still has to read the PIN off the label and type it in — which
+# is the one thing the QR code exists to avoid.
+#
+# An ALLOWLIST, not the whole query string: these are the only two the
+# consumer reads, and nothing else customer-controlled belongs in a Location
+# header. Re-encoding through urlencode() also normalises whatever arrived.
+_WIZARD_FORWARDED_PARAMS = ("pin", "device")
+
+
+def _wizard_redirect_target(request: web.Request) -> str:
+    """`/greenautarky-setup.html`, carrying the label's pin/device through."""
+    query = getattr(request, "query", None) or {}
+    forwarded = [(k, query[k]) for k in _WIZARD_FORWARDED_PARAMS if query.get(k)]
+    if not forwarded:
+        return _WIZARD_SETUP_PATH
+    return f"{_WIZARD_SETUP_PATH}?{urlencode(forwarded)}"
+
+
 def _patch_index_view_for_wizard_redirect(hass: HomeAssistant) -> None:
     """Monkey-patch HA's IndexView.get to redirect `/` → /greenautarky-setup.html
     while the GA wizard is incomplete.
@@ -695,16 +722,53 @@ def _patch_index_view_for_wizard_redirect(hass: HomeAssistant) -> None:
         if not state.get("completed", False):
             return web.Response(
                 status=302,
-                headers={"location": "/greenautarky-setup.html"},
+                headers={"location": _wizard_redirect_target(request)},
             )
         return await original_get(self, request)
 
     IndexView.get = patched_get  # type: ignore[method-assign]
     IndexView._ga_wizard_patched = True  # type: ignore[attr-defined]
+
+    # Patching the CLASS is not enough, and getting this wrong is silent.
+    #
+    # IndexView._route is a `cached_property` returning
+    # `ResourceRoute("GET", self.get, self)`. It evaluates `self.get` at FIRST
+    # ACCESS and caches the finished ResourceRoute in the instance __dict__.
+    # `resolve()` touches `self._route` on every request that reaches the
+    # resource, so ANY earlier hit — a monitoring probe, the fleet-manager
+    # poll, a browser, HA's own startup traffic — materialises it before a
+    # custom_component has finished setting up. The cached route then holds a
+    # bound method of the ORIGINAL function forever, and re-assigning the class
+    # attribute afterwards changes nothing: no error, no log line, the redirect
+    # simply never fires.
+    #
+    # Seen in the field: with the wizard unfinished and the setup page serving
+    # normally, `/` still answered 200 with Home Assistant's own frontend. The
+    # QR code on the device label points at `/`, so a customer scanning it
+    # landed in Home Assistant with no account. The same unit had behaved
+    # correctly on an earlier boot — which is what a race that is lost or won
+    # at startup looks like, and why hand-testing calls it fixed.
+    #
+    # Dropping the cached value makes the next access rebuild the route against
+    # the patched function. Correct whether we arrive early (nothing cached yet)
+    # or late (stale route discarded).
+    rebuilt = 0
+    try:
+        for resource in hass.http.app.router.resources():
+            if isinstance(resource, IndexView):
+                if resource.__dict__.pop("_route", None) is not None:
+                    rebuilt += 1
+    except Exception:  # pragma: no cover - never break setup over this
+        _LOGGER.exception(
+            "greenautarky_site: could not drop the cached IndexView route; the "
+            "`/` → wizard redirect may not fire"
+        )
+
     _LOGGER.info(
         "greenautarky_site: patched IndexView.get to redirect `/` → "
         "/greenautarky-setup.html while wizard is incomplete (server-side, "
-        "fires before any HA JS bundle loads)"
+        "fires before any HA JS bundle loads); dropped %s stale cached route(s)",
+        rebuilt,
     )
 
 

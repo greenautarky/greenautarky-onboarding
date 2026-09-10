@@ -1,3 +1,45 @@
+## 2.7.1
+
+### fix(wizard): `/` must reach the setup page, and must carry the label's PIN
+
+Two defects on the customer's very first hit. The device label's QR code points
+at `/`, so both of them land a customer somewhere other than where the label
+promised.
+
+**The redirect could silently never fire.** `IndexView._route` is a
+`cached_property` returning `ResourceRoute("GET", self.get, self)`: it binds
+`self.get` at FIRST ACCESS and caches the finished route on the instance, and
+`resolve()` touches it on every request. Any hit before this component finishes
+setting up — a monitoring probe, a fleet poll, a browser, Home Assistant's own
+startup traffic — freezes the ORIGINAL handler into the route, and re-assigning
+`IndexView.get` on the class afterwards is a no-op: no error, no log line, the
+redirect simply never happens. Whether it happens depends on startup timing, so
+the defect appears and disappears between boots, which is why testing by hand
+calls it fixed. Setup now drops the cached `_route` from the live IndexView
+instances after patching, so the next access rebuilds it against the patched
+function — correct whether we arrive early (nothing cached) or late (stale
+route discarded).
+
+**The redirect threw the scanned PIN away.** The label's QR code encodes
+`/?pin=<pin>&device=<id>`, and the setup panel reads both back out of
+`window.location` to auto-fill the six digits and name the unit. The redirect
+answered with a bare `/greenautarky-setup.html`, so a customer who had just
+scanned the code still had to read the PIN off the label and type it in — the
+one thing the QR code exists to avoid. This was true on every device where the
+redirect fired at all, including ones that looked healthy, because every check
+asked only for the status and the path and never whether the parameters
+survived. `/` now forwards `pin` and `device`. An allowlist, not a
+pass-through: the query string is customer-controlled and lands in a `Location`
+header, so only the two parameters the panel actually reads are carried over,
+re-encoded rather than pasted.
+
+Tests drive the real `homeassistant.components.frontend.IndexView` — a stub
+would test our idea of Core rather than Core — and pin both directions: the
+redirect must fire while the wizard is pending and must NOT fire once it is
+completed, so a patch that always redirects cannot pass. The forwarding tests
+pin the label's parameters through, the bare path when there is no query, and
+that a header-injection or open-redirect shaped parameter is dropped.
+
 ## 2.7.0
 
 ### fix(dashboards): restrict an unassigned personal dashboard to masters (fail closed)
