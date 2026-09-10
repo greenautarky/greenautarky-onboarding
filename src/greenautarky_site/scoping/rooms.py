@@ -275,8 +275,26 @@ def _build_home_model(
         def sensors(items: list[Any], dc: str) -> list[str]:
             return [e.entity_id for e in items if device_class(e.entity_id) == dc]
 
+        # A room with a ga_heating thermostat has ONE thermostat: that entity fans out
+        # to the valves in its area, so listing the valves next to it would show a
+        # resident three controls for one room, two of which drive the same radiators
+        # as the first.
+        #
+        # Derived on purpose, rather than solved by hiding the valves in the registry.
+        # Hiding writes persistent state that outlives its cause: on a device where
+        # ga_heating fails to load, the room entity is gone AND the valves stay hidden,
+        # so the resident sees nothing and can operate nothing — a load error would
+        # become a total loss of control instead of an untidy dashboard. Derived state
+        # cannot outlive its cause; if the thermostat is not there, the valves show
+        # again, with no code of ours having to run.
+        def thermostats(items: list[Any]) -> list[str]:
+            all_climate = dom(items, "climate")
+            ours = [e for e in all_climate
+                    if (entry := ent_reg.async_get(e)) and entry.platform == "ga_heating"]
+            return ours or all_climate
+
         return {
-            "climate": dom(primary, "climate"),  # strategy collapses coupled TRVs
+            "climate": thermostats(primary),
             "lights": dom(primary, "light"),
             "switches": dom(primary, "switch"),
             "temps": sensors(primary, "temperature"),

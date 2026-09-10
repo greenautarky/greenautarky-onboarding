@@ -33,9 +33,10 @@ async def _reconcile_dashboard_visibility(
     """Write per-view ``visible`` on a storage dashboard from the matrix.
 
     Assigned sub-users PLUS all masters are kept visible (so the master can
-    still see/manage the board); everyone else is hidden. An empty assignment
-    strips ``visible`` (back to visible-to-all). YAML/missing dashboards are
-    skipped. Best-effort — failures log, never raise to the caller.
+    still see/manage the board); everyone else is hidden. An empty assignment is
+    fail-closed: on a managed device the board is restricted to masters; on an
+    unmanaged device (no masters) ``visible`` is stripped so the sole user keeps it.
+    YAML/missing dashboards are skipped. Best-effort — failures log, never raise.
     """
     try:
         from homeassistant.components.lovelace.const import LOVELACE_DATA
@@ -63,9 +64,19 @@ async def _reconcile_dashboard_visibility(
         for view in views:
             view["visible"] = [{"user": uid} for uid in visible_ids]
     else:
-        # No sub-users assigned → strip ``visible`` (back to visible-to-all).
-        for view in views:
-            view.pop("visible", None)
+        # Fail closed: a personal board with no explicit assignment is restricted to
+        # masters. With no assignment the owner is unknown, so on a MANAGED device only
+        # masters (who can reassign it) see it — a scoped resident sees a board only when
+        # it is explicitly assigned to them. On an UNMANAGED device (no masters at all)
+        # leave visibility open, else the device's sole user would lose their own board.
+        masters = await hass.async_add_executor_job(_read_master_user_ids, hass)
+        if masters:
+            visible_ids = sorted(masters)
+            for view in views:
+                view["visible"] = [{"user": uid} for uid in visible_ids]
+        else:
+            for view in views:
+                view.pop("visible", None)
     config["views"] = views
     try:
         await dash.async_save(config)

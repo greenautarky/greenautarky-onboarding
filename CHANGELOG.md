@@ -1,3 +1,185 @@
+## 2.7.1
+
+### fix(wizard): `/` must reach the setup page, and must carry the label's PIN
+
+Two defects on the customer's very first hit. The device label's QR code points
+at `/`, so both of them land a customer somewhere other than where the label
+promised.
+
+**The redirect could silently never fire.** `IndexView._route` is a
+`cached_property` returning `ResourceRoute("GET", self.get, self)`: it binds
+`self.get` at FIRST ACCESS and caches the finished route on the instance, and
+`resolve()` touches it on every request. Any hit before this component finishes
+setting up — a monitoring probe, a fleet poll, a browser, Home Assistant's own
+startup traffic — freezes the ORIGINAL handler into the route, and re-assigning
+`IndexView.get` on the class afterwards is a no-op: no error, no log line, the
+redirect simply never happens. Whether it happens depends on startup timing, so
+the defect appears and disappears between boots, which is why testing by hand
+calls it fixed. Setup now drops the cached `_route` from the live IndexView
+instances after patching, so the next access rebuilds it against the patched
+function — correct whether we arrive early (nothing cached) or late (stale
+route discarded).
+
+**The redirect threw the scanned PIN away.** The label's QR code encodes
+`/?pin=<pin>&device=<id>`, and the setup panel reads both back out of
+`window.location` to auto-fill the six digits and name the unit. The redirect
+answered with a bare `/greenautarky-setup.html`, so a customer who had just
+scanned the code still had to read the PIN off the label and type it in — the
+one thing the QR code exists to avoid. This was true on every device where the
+redirect fired at all, including ones that looked healthy, because every check
+asked only for the status and the path and never whether the parameters
+survived. `/` now forwards `pin` and `device`. An allowlist, not a
+pass-through: the query string is customer-controlled and lands in a `Location`
+header, so only the two parameters the panel actually reads are carried over,
+re-encoded rather than pasted.
+
+Tests drive the real `homeassistant.components.frontend.IndexView` — a stub
+would test our idea of Core rather than Core — and pin both directions: the
+redirect must fire while the wizard is pending and must NOT fire once it is
+completed, so a patch that always redirects cannot pass. The forwarding tests
+pin the label's parameters through, the bare path when there is no query, and
+that a header-injection or open-redirect shaped parameter is dropped.
+
+## 2.7.0
+
+### fix(dashboards): restrict an unassigned personal dashboard to masters (fail closed)
+
+The per-view visibility reconcile now fails closed for a storage dashboard with no
+`sub_user_dashboards` assignment. With no assignment the owner is unknown, so on a
+managed device (masters configured) the board is visible to masters only — who can
+reassign it — and a scoped resident sees a board only when it is explicitly assigned
+to them. On an unmanaged device (no masters) visibility is left open, so the device's
+sole user keeps access to their own board.
+
+Tests: the reconcile test asserts the unassigned board is masters-only; a new test
+pins the unmanaged-device carve-out.
+
+## 2.6.0
+
+### fix(setup): ensure `core.uuid` exists so a fresh device has an identity
+
+Home Assistant creates `core.uuid` lazily — only the first time something calls
+`instance_id.async_get()`. Nothing on a GA device ever asked, so a freshly
+flashed, fully onboarded device shipped cloud telemetry with an EMPTY instance
+id: all three identity sources (`core.uuid`, the HA analytics id, the reported
+device id) came back blank, and the device was invisible under its own identity
+in the fleet backends.
+
+Setup now calls `instance_id.async_get(hass)` once in `_async_setup_common`,
+right after the component decides it is the first load. That is the earliest GA
+code that runs on every device, so the id is materialised before anything reads
+it. The call is best-effort: if it raises, setup logs a warning and continues —
+a missing instance id must never be able to stop the component coming up.
+
+Guarded by two tests: one asserts setup requests the instance id (so `core.uuid`
+gets created), one asserts setup still succeeds if the request fails.
+
+## 2.5.0
+
+### feat(rooms): split a room's identity from its type — `ref` + `kind`
+
+`type` was doing two jobs at once: it CLASSIFIED a room and it was used verbatim
+as the Home Assistant `area_id`. area_ids are unique, so a flat with two
+bedrooms could not be expressed — the second overwrote the first, both rooms'
+sensors landed in one area, and the endpoint answered 200 with no warning and no
+test covering it.
+
+`ref` now identifies (opaque, stable, becomes the area_id) and `kind`
+classifies (a catalogue slug, carried as an HA label that ga_manager reads).
+`kind_name` carries a human title only where the device's own derivation would
+get it wrong. Backward compatible: `type` still means ref AND kind at once, so
+nothing that works today breaks.
+
+Three further changes that come with it, each because the old behaviour tied
+identity to something that moves:
+
+* **`_find_area` matches by ref only.** The name fallback made a room's identity
+  depend on whatever the installer typed, so a rename could split one room into
+  two or merge two into one.
+* **The first sync sweeps the areas HA Core seeds by itself.** It runs AFTER
+  creating, so the registry is never empty and `site_defaults` cannot re-seed
+  into the gap. It is not `replace`: at first sync no resident exists, so
+  nothing empty can be theirs. A room holding a device is never swept.
+* **A lost ref map re-adopts instead of duplicating**, and a resident's rename
+  survives that re-adoption.
+
+Re-measured by the integrator rather than taken on trust: 9 tests fail against
+the unchanged source — the ones describing two-rooms-of-one-kind, the label
+carrier, the first-sync sweep and the re-adoption — and 181 pass with the
+change.
+
+`site_defaults.async_seed_default_areas` was deliberately NOT deleted. It looks
+like dead code because Core seeds first on a fresh flash, but the tenant wipe
+clears `core.area_registry` while leaving `.storage/onboarding` marked done — so
+after a reset Core does not re-seed and the GA seeder is the only one that runs.
+Removing it would have reintroduced the documented "a reset device came back
+with ZERO rooms" defect.
+
+## 2.4.0
+
+### fix(onboarding): the account step is a dead end that leaks users
+
+Two failures in one handler, both reachable by a dropped connection.
+
+**The orphan.** `async_create_user` ran before `async_add_auth`. When the
+username already existed the handler returned 400 and left the user it had just
+created standing — credential-less, invisible to the wizard, counted by
+nothing. Anything that stops the credential now also removes that user.
+
+**The dead end.** The panel offers no way past the account step, so a resident
+whose first attempt half-succeeded could only press the button again, and the
+server answered 400 every time. If the username already belongs to someone, the
+step now adopts that account and continues.
+
+Measured on a bench device 2026-08-27: five attempts, thirteen users named
+"resident", exactly one able to log in, and the device stuck at
+`completed: false` with `account` already in `steps_done` — set up and locked
+out. Onboarding is a flow a person walks once; it has to survive being walked
+twice.
+
+## 2.3.0 — 2026-08-25
+
+### Added
+- `POST /api/greenautarky_site/rooms/sync` — GACI pushes the flat's rooms in at
+  installation and the component makes them real: it creates the areas and
+  places the Zigbee devices in them by `ieee_address` (KB #184, ADR-0008).
+
+  Replaces a GitHub Actions workflow that SSHed into the device as root to do
+  the same thing, authenticated by a token compiled into the installer app.
+
+  Merge is the only mode. GACI owns the rooms at installation; the resident owns
+  them afterwards, so a `replace` mode would be a way to delete a resident's
+  rooms from the cloud. A request asking for one is refused, not downgraded.
+
+  Two details that are load-bearing rather than cosmetic:
+
+  - A new area is created under the ENGLISH catalogue name so Home Assistant
+    derives `area_id` from the type, then immediately renamed to the installer's
+    name. `area_id` is fixed at creation and survives renames, so the id stays
+    catalogue-shaped — which is the only thing the fleet-wide room type is
+    derived from — while the resident sees a name in their own language.
+  - Matching prefers `area_id == type` over the name. A freshly flashed device
+    already carries living_room / kitchen / bedroom (measured on K31 after a
+    reflash), so adopting those three is the normal case; matching on name first
+    would have produced six rooms in every flat.
+
+  A resident rename is reported as a single boolean. The new name is personal
+  data and never leaves the device — the endpoint stores what GACI installed and
+  compares, so the cloud can show "Wohnzimmer (renamed)" without ever learning
+  what it was renamed to.
+
+  No pseudonym here: `area_ref` is derived with a salt in ga_manager's add-on
+  volume, which this container cannot read. This returns the plain `area_id` and
+  ga_manager converts it before anything leaves the device.
+
+## 2.2.0 — 2026-08-24
+- **feat(home-model): one thermostat per room, derived rather than by hiding
+  valves.** The home model now derives a single thermostat per room from the
+  radiators in it, instead of presenting valves and hiding the ones that should
+  not be touched. Cut together with `ga-heating` 0.2.0 — they are two halves of
+  the same feature (room thermostats), and shipping one without the other ships
+  it half-built. Released for canary testing, not as a fleet release.
+
 ## 2.1.1 — 2026-07-28
 - **fix(scoping): registry filtering that actually installs, and actually
   filters.** A scoped sub-user had NO dashboard at all on rc36 — blank page.

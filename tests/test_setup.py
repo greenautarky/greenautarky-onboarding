@@ -159,3 +159,54 @@ async def test_setup_without_legacy_storage_is_unchanged(hass, hass_storage) -> 
     state = hass.data[DOMAIN]["state"]
     assert state.get("completed") is True  # pre-existing-device default
     assert "sub_users" not in state
+
+
+@pytest.mark.asyncio
+async def test_setup_requests_the_instance_id_so_core_uuid_exists(hass) -> None:
+    """#762: setup must ask HA for the instance id, so .storage/core.uuid is
+    created — otherwise a fresh, fully-onboarded device ships cloud telemetry
+    with no device_id, because HA writes core.uuid only lazily and nothing
+    else on a GA device ever asks."""
+    from greenautarky_site import async_setup
+
+    if not hasattr(hass, "http") or hass.http is None:
+        hass.http = MagicMock()
+
+    from unittest.mock import AsyncMock
+
+    with (
+        patch("greenautarky_site._async_register_frontend_bundle", return_value=None),
+        patch("greenautarky_site._async_register_panel", return_value=None),
+        patch("greenautarky_site._register_redirect_js", return_value=None),
+        patch("greenautarky_site._patch_index_view_for_wizard_redirect", return_value=None),
+        patch("greenautarky_site.instance_id.async_get", new=AsyncMock(return_value="uuid-xyz")) as m,
+    ):
+        ok = await async_setup(hass, {"greenautarky_site": {}})
+
+    assert ok is True
+    assert m.await_count == 1, "async_setup must request the HA instance id exactly once"
+    m.assert_awaited_with(hass)
+
+
+@pytest.mark.asyncio
+async def test_setup_survives_instance_id_failure(hass) -> None:
+    """Identity is best-effort: if the instance-id helper raises, setup must
+    still return True (telemetry degrades, the device still boots)."""
+    from greenautarky_site import async_setup
+
+    if not hasattr(hass, "http") or hass.http is None:
+        hass.http = MagicMock()
+
+    from unittest.mock import AsyncMock
+
+    with (
+        patch("greenautarky_site._async_register_frontend_bundle", return_value=None),
+        patch("greenautarky_site._async_register_panel", return_value=None),
+        patch("greenautarky_site._register_redirect_js", return_value=None),
+        patch("greenautarky_site._patch_index_view_for_wizard_redirect", return_value=None),
+        patch("greenautarky_site.instance_id.async_get",
+              new=AsyncMock(side_effect=RuntimeError("boom"))),
+    ):
+        ok = await async_setup(hass, {"greenautarky_site": {}})
+
+    assert ok is True
