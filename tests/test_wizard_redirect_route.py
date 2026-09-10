@@ -22,6 +22,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+from aiohttp import web
 from homeassistant.components.frontend import IndexView
 
 from greenautarky_site import _patch_index_view_for_wizard_redirect
@@ -119,25 +120,29 @@ async def test_completed_wizard_falls_through_to_home_assistant(
     view.hass = hass  # type: ignore[assignment]
     view._route  # noqa: B018  - same precondition as the regression case
 
+    # Stand in for Core's own handler so we can prove the patch DELEGATES to it.
+    # Rendering Core's real template needs a real hass, and the earlier shape of
+    # this test simply swallowed that exception — which made it pass without
+    # proving anything, because a patch that redirected unconditionally raises
+    # nothing either.
+    reached: list[object] = []
+
+    async def _core_handler(self, request):
+        reached.append(request)
+        return web.Response(status=200, text="home assistant")
+
+    IndexView.get = _core_handler  # type: ignore[method-assign]
+
     _patch_index_view_for_wizard_redirect(hass)
 
-    handler = view._route.handler
-    called: list[bool] = []
-
-    async def _original(self, request):  # pragma: no cover - replaced below
-        called.append(True)
-
-    # We do not want to render Core's real template here; assert instead that
-    # the patched handler does NOT short-circuit with our redirect.
-    response = None
-    try:
-        response = await handler(SimpleNamespace())
-    except Exception:  # noqa: BLE001 - Core's get needs a real hass; fine
-        pass
-    if response is not None:
-        assert response.headers.get("location") != SETUP_PATH, (
-            "a completed wizard must fall through to Home Assistant"
-        )
+    response = await view._route.handler(SimpleNamespace())
+    assert reached, (
+        "a completed wizard must fall through to Home Assistant's own handler — "
+        "the patch short-circuited instead, which would push every provisioned "
+        "resident back into setup"
+    )
+    assert response.status == 200
+    assert response.headers.get("location") != SETUP_PATH
 
 
 # --- The redirect must carry the label's QR parameters ------------------------
