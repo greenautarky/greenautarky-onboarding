@@ -435,3 +435,230 @@ async def test_a_resident_rename_survives_a_lost_ref_map_check(hass):
     resp = await _post(hass, {"rooms": [{"ref": "room_1a4", "name": "Wohnzimmer"}]})
     assert _body(resp)["rooms"][0]["renamed_by_resident"] is True
     assert ar.async_get(hass).async_get_area("room_1a4").name == "Salon"
+
+
+# ─── the collision that killed the whole flat ───────────────────────────
+#
+# Rooms/sync is not the only thing that creates areas. The DEVICE-PLACEMENT
+# path creates them too, and it knows nothing about GACI's refs — so its areas
+# carry `id = slug(name)`. Ref-only matching (correctly) does not find them,
+# the handler falls into its `created` branch, and Home Assistant refuses a
+# second area under a name that is already taken. It refuses by RAISING.
+#
+# Before this section existed, that raise escaped the per-room loop and took
+# the whole request with it — including the device placement further down. One
+# unmatchable room therefore left EVERY room without a device, which is what a
+# heating engine reads to find a valve. The tests below assert the outcome
+# (devices carry an `area_id`), not the status code: a 200 with nothing placed
+# is precisely the failure being fixed here.
+
+
+def _seed_placement_areas(hass, *names):
+    """Areas as the device-placement path leaves them: ``id = slug(name)``.
+
+    That path has no ref to work with, so the id is the slug of the name the
+    resident sees — exactly the state a later rooms/sync has to merge into.
+    """
+    registry = ar.async_get(hass)
+    return [registry.async_create(n) for n in names]
+
+
+@pytest.mark.parametrize("room", [
+    # A ref that HA can use as an id. The create succeeds, the RENAME onto the
+    # taken name is what raises.
+    {"ref": "room_1a4", "kind": "living_room", "name": "Wohnzimmer"},
+    # No ref at all — an older GACI build. The area is created straight under
+    # the display name, so the CREATE is what raises. This is the shape seen in
+    # the field.
+    {"name": "Wohnzimmer"},
+], ids=["ref-renames-onto-taken-name", "no-ref-creates-taken-name"])
+async def test_an_area_already_holding_the_room_name_is_adopted_not_thrown(
+    hass, config_entry, room
+):
+    """An area whose name IS the room's name is that room — it just carries a
+    slug id, because something other than this handler made it. Home Assistant
+    fixes an area_id at creation and offers no way to change it, so the ref
+    cannot become the id; adopting the area and recording the ref is the only
+    answer that is neither a 500 nor a duplicate room."""
+    _seed(hass)
+    _seed_placement_areas(hass, "Wohnzimmer")
+    device = _add_zigbee_device(hass, IEEE_A)
+
+    resp = await _post(hass, {"rooms": [dict(room, members=[IEEE_A])]})
+
+    assert resp.status == 200
+    body = _body(resp)
+    assert body["ok"] is True and body["failed"] == 0
+    entry = body["rooms"][0]
+    assert entry["ok"] is True, entry.get("error")
+    assert entry["created"] is False
+    assert entry["matched_on"] == "adopted_name"
+    assert entry["area_id"] == "wohnzimmer", "the id HA will not let us change"
+
+    registry = ar.async_get(hass)
+    assert len(registry.async_list_areas()) == 1, "adopted, not duplicated"
+
+    # THE POINT. A 200 with nothing placed is the failure being fixed.
+    assert dr.async_get(hass).async_get(device.id).area_id == "wohnzimmer"
+
+
+async def test_one_unmatchable_room_must_not_leave_the_whole_flat_unplaced(
+    hass, config_entry
+):
+    """The live blocker, in one test. A batch is a batch: a room that cannot be
+    resolved is reported and the rest of the flat is still placed. Before, the
+    first raise aborted the request before any device was touched."""
+    _seed(hass)
+    dev_a = _add_zigbee_device(hass, IEEE_A)
+    dev_b = _add_zigbee_device(hass, IEEE_B)
+
+    resp = await _post(hass, {"rooms": [
+        {"ref": "room_1a4", "name": "Wohnzimmer", "members": [IEEE_A]},
+        # Same name, different ref. HA cannot express two areas under one name,
+        # so this room genuinely cannot be created — and must fail ALONE.
+        {"ref": "room_1a9", "name": "Wohnzimmer"},
+        {"ref": "room_1b2", "name": "Küche", "members": [IEEE_B]},
+    ]})
+
+    body = _body(resp)
+    assert resp.status == 207, "a batch that did not fully apply is not a 200"
+    assert body["ok"] is False and body["failed"] == 1
+
+    good, bad, also_good = body["rooms"]
+    assert good["ok"] is True and also_good["ok"] is True
+    assert bad["ok"] is False
+    assert bad["error"], "a failed room must say WHY"
+    assert bad["area_id"] is None
+
+    registry = dr.async_get(hass)
+    assert registry.async_get(dev_a.id).area_id == "room_1a4"
+    assert registry.async_get(dev_b.id).area_id == "room_1b2", \
+        "the room AFTER the failure must still be placed"
+
+
+async def test_an_adopted_room_survives_a_second_sync_unchanged(hass, config_entry):
+    """Idempotence is not a nicety here: the sync runs again on every follow-up
+    visit and after every reflash. The second run must find the adopted room by
+    its recorded ref — not collide with it again."""
+    _seed(hass)
+    _seed_placement_areas(hass, "Wohnzimmer")
+    device = _add_zigbee_device(hass, IEEE_A)
+    payload = {"rooms": [
+        {"ref": "room_1a4", "kind": "living_room", "name": "Wohnzimmer",
+         "members": [IEEE_A]},
+    ]}
+
+    first = await _post(hass, payload)
+    before = {(a.id, a.name, frozenset(a.aliases))
+              for a in ar.async_get(hass).async_list_areas()}
+
+    second = await _post(hass, payload)
+
+    assert (first.status, second.status) == (200, 200)
+    assert _body(second)["ok"] is True
+    assert _body(second)["rooms"][0]["matched_on"] == "ref_alias", \
+        "found by the ref that was written down, not by its name again"
+    after = {(a.id, a.name, frozenset(a.aliases))
+             for a in ar.async_get(hass).async_list_areas()}
+    assert after == before, "running it twice must change nothing"
+    assert dr.async_get(hass).async_get(device.id).area_id == "wohnzimmer"
+
+
+async def test_the_recorded_ref_outlives_this_component_s_store(hass):
+    """WHY AN ALIAS AND NOT A ROW IN THE STORE. Home Assistant will not change
+    an area_id, so the ref has to be written down somewhere. The alias sits in
+    `core.area_registry` next to the id, so it survives what the store does
+    not — and the module's own rule holds: lose the store, keep the registry,
+    and a re-sync still finds its rooms instead of duplicating them."""
+    _seed(hass)
+    _seed_placement_areas(hass, "Wohnzimmer")
+    payload = {"rooms": [{"ref": "room_1a4", "name": "Wohnzimmer"}]}
+    await _post(hass, payload)
+
+    area = ar.async_get(hass).async_get_area("wohnzimmer")
+    assert "room_1a4" in area.aliases
+
+    _seed(hass)                              # store wiped, registry intact
+    resp = await _post(hass, payload)
+
+    assert resp.status == 200
+    assert _body(resp)["rooms"][0]["matched_on"] == "ref_alias"
+    assert len(ar.async_get(hass).async_list_areas()) == 1
+
+
+async def test_a_ref_home_assistant_cannot_use_as_an_id_is_found_next_time(hass):
+    """The sibling the code already predicted in a comment and then left
+    broken: HA slugifies the seed name, so a ref that does not survive that
+    round-trip (`room__1a4` -> id `room_1a4`) produced a room its own ref could
+    not address. The old code logged a warning and moved on — the NEXT sync
+    then built a second room beside it, or raised on the name. Now the ref is
+    recorded the same way an adopted room's is."""
+    _seed(hass)
+    first = await _post(hass, {"rooms": [{"ref": "room__1a4", "name": "Wohnzimmer"}]})
+
+    area_id = _body(first)["rooms"][0]["area_id"]
+    assert area_id == "room_1a4", "HA dropped the doubled underscore"
+    assert "room__1a4" in ar.async_get(hass).async_get_area(area_id).aliases
+
+    second = await _post(hass, {"rooms": [{"ref": "room__1a4", "name": "Wohnzimmer"}]})
+
+    assert second.status == 200
+    assert _body(second)["rooms"][0]["matched_on"] == "ref_alias"
+    assert len(ar.async_get(hass).async_list_areas()) == 1, "one room, not two"
+
+
+async def test_a_batch_with_a_failure_in_it_sweeps_nothing(hass):
+    """A failed room claims no area, so an area that should have been claimed
+    looks unclaimed — and the sweep deletes unclaimed empty areas. Deleting on
+    a picture we know is incomplete is the one thing the sweep's safety
+    properties exist to prevent."""
+    _seed(hass)
+    _seed_default_areas(hass)                # Living Room / Kitchen / Bedroom
+
+    resp = await _post(hass, {"rooms": [
+        {"ref": "room_1a4", "name": "Wohnzimmer"},
+        {"ref": "room_1a9", "name": "Wohnzimmer"},     # cannot be created
+    ]})
+
+    body = _body(resp)
+    assert body["failed"] == 1
+    assert body["swept"] == 0
+    names = {a.name for a in ar.async_get(hass).async_list_areas()}
+    assert {"Living Room", "Kitchen", "Bedroom"} <= names
+
+
+async def test_a_failure_report_never_carries_a_resident_chosen_name(hass):
+    """The new `error` field travels off the device, so it is held to the same
+    rule as everything else here: an area_id is the resident's own room name
+    for a room they made, so a failure says how many, never which."""
+    _seed(hass)
+    registry = ar.async_get(hass)
+    for personal in ("Papas Zimmer", "Mamas Zimmer"):
+        area = registry.async_create(personal)
+        registry.async_update(area.id, aliases={"room_1a4"})
+
+    resp = await _post(hass, {"rooms": [{"ref": "room_1a4", "name": "Wohnzimmer"}]})
+
+    body = _body(resp)
+    assert resp.status == 207 and body["failed"] == 1
+    assert "ambiguous" in body["rooms"][0]["error"]
+    blob = json.dumps(body)
+    for personal in ("Papas Zimmer", "Mamas Zimmer", "papas_zimmer", "mamas_zimmer"):
+        assert personal not in blob, "a resident's room name must not leave"
+
+
+async def test_a_clean_sync_still_answers_200_and_ok(hass, config_entry):
+    """The known-good half: nothing above may turn the ordinary path amber."""
+    _seed(hass)
+    device = _add_zigbee_device(hass, IEEE_A)
+
+    resp = await _post(hass, {"rooms": [
+        {"ref": "room_1a4", "kind": "living_room", "name": "Wohnzimmer",
+         "members": [IEEE_A]},
+    ]})
+
+    body = _body(resp)
+    assert resp.status == 200
+    assert body["ok"] is True and body["failed"] == 0
+    assert body["rooms"][0]["ok"] is True and body["rooms"][0]["error"] is None
+    assert dr.async_get(hass).async_get(device.id).area_id == "room_1a4"
