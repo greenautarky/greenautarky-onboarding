@@ -43,6 +43,10 @@ _fixture() {
   printf '%s\n' "${urlbase}" > "${d}/src/greenautarky_site/__init__.py"
   printf '%s\n' "${domain}"  > "${d}/src/greenautarky_site/const.py"
   printf '%s\n' "${js}" > "${d}/src/greenautarky_site/frontend_bundle/frontend_latest/greenautarky-setup.abc123.js"
+  # The gate derives the panel's own i18n namespace from the entry name, so a
+  # fixture needs the same provenance file a real bundle carries.
+  printf 'source_repo: fixture\nsource_ref: 0000000\nentry: greenautarky-setup\n' \
+    > "${d}/src/greenautarky_site/frontend_bundle/BUILD-INFO.txt"
   bash "${d}/scripts/build_bundle.sh" --hash >/dev/null 2>&1
 }
 
@@ -55,6 +59,10 @@ _case() { # name  expect(fail|pass)  urlbase  domain  js
   local name="$1" expect="$2" d out rc
   d="$(mktemp -d)"; trap 'rm -rf "${d}"' RETURN
   _fixture "${d}" "$3" "$4" "$5"
+  case "${name}" in *"BUILD-INFO entry unreadable"*)
+    rm -f "${d}/src/greenautarky_site/frontend_bundle/BUILD-INFO.txt"
+    bash "${d}/scripts/build_bundle.sh" --hash >/dev/null 2>&1 ;;
+  esac
   out="$(bash "${d}/scripts/build_bundle.sh" --check 2>&1)"; rc=$?
   if [ "${expect}" = "fail" ]; then
     [ "${rc}" -ne 0 ] && _ok "must-fail: ${name}" || { _bad "must-fail: ${name} — gate stayed GREEN"; echo "${out}" | sed 's/^/        /'; }
@@ -93,6 +101,19 @@ _case "correct paths + stock HA namespaces" pass "${GOOD_URLBASE}" "${GOOD_DOMAI
 _case "runtime-assembled path, constant correct — no literal to grep" pass \
   "${GOOD_URLBASE}" "${GOOD_DOMAIN}" \
   '.p="/greenautarky_site_static/frontend_latest/";const a=JSON.parse(String.raw`{"b":"greenautarky_site"}`).b,i=`/api/${a}`;fetch(`${i}/status`);fetch("/api/image/1")'
+# Two measured false positives from a real produced bundle, 2026-09-14. Not
+# every greenautarky_* token is a path claim, and a gate that flags these gets
+# overridden by reflex within a week.
+_case "the panel's own i18n keys are not a path claim" pass "${GOOD_URLBASE}" "${GOOD_DOMAIN}" \
+  "${GOOD_JS};t={\"ui.panel.greenautarky_setup.welcome.cta\":\"Los\",\"ui.panel.greenautarky_setup.common.next\":\"Weiter\"}"
+_case "a WS command to a real sibling component is not a path claim" pass "${GOOD_URLBASE}" "${GOOD_DOMAIN}" \
+  "${GOOD_JS};e.callWS({type:\"greenautarky_telemetry/get\"})"
+# …but an unknown GA namespace still must not slip through on that excuse.
+_case "an unknown greenautarky_* namespace is still flagged" fail "${GOOD_URLBASE}" "${GOOD_DOMAIN}" \
+  "${GOOD_JS};e.callWS({type:\"greenautarky_onboarding/get\"})"
+_case "BUILD-INFO entry unreadable -> FAIL, never skip" fail "${GOOD_URLBASE}" "${GOOD_DOMAIN}" \
+  "${GOOD_JS}"
+
 _case "a future rename, applied consistently to both sides" pass \
   'URL_BASE = "/ga_wizard_static"' 'DOMAIN = "ga_wizard"' \
   'fetch("/api/ga_wizard/status");u="/ga_wizard_static/x.js";i="/api/image/1"'

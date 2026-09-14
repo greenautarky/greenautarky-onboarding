@@ -116,11 +116,31 @@ verify_bundle_agrees_with_component() {
   #     So the real discriminator is the NAMESPACE TOKEN, wherever it appears:
   #     every greenautarky_* token in the bundle must be the component's own
   #     DOMAIN (or its static mount, which is DOMAIN + "_static").
-  local seen_token=0 tok
+  #     Not every greenautarky_* token is a path claim, and a gate that flags
+  #     the legitimate ones gets overridden by reflex. Measured against a real
+  #     produced bundle, two are legitimate and are allowed BY DERIVATION, not
+  #     by a hardcoded list where that is possible:
+  #       * the panel's i18n namespace (ui.panel.<entry with _>.*), derived
+  #         from the entry name BUILD-INFO.txt records;
+  #       * WebSocket commands to sibling GA components the wizard really
+  #         talks to — those are listed, with the reason, below.
+  local entry_ns="" info="${BUNDLE}/BUILD-INFO.txt"
+  entry_ns="$(sed -n 's/^entry:[[:space:]]*//p' "${info}" 2>/dev/null | head -1 | tr '-' '_')"
+  [ -n "${entry_ns}" ] || {
+    echo "::error::cannot read the entry name from ${info} — cannot tell the panel's own i18n namespace from a stray one" >&2
+    return 1; }
+  # Sibling GA components the wizard legitimately calls over WebSocket. Each
+  # one here is a measured false positive, kept so it cannot come back.
+  local ga_siblings="greenautarky_telemetry"
+
+  local seen_token=0 tok allowed
   while IFS= read -r tok; do
     [ -n "${tok}" ] || continue
     seen_token=$((seen_token+1))
-    if [ "${tok}" != "${domain}" ] && [ "${tok}" != "${domain}_static" ]; then
+    allowed=0
+    case " ${ga_siblings} " in *" ${tok} "*) allowed=1;; esac
+    [ "${tok}" = "${entry_ns}" ] && allowed=1
+    if [ "${allowed}" -eq 0 ] && [ "${tok}" != "${domain}" ] && [ "${tok}" != "${domain}_static" ]; then
       echo "::error::bundle carries the namespace token '${tok}' but the component is '${domain}'" >&2
       rc=1
     fi
@@ -180,6 +200,38 @@ case "${MODE}" in
     echo "==> Cloning ${REPO} @ ${REF}"
     git clone --quiet --no-checkout "${REPO}" "${WORK}/frontend"
     git -C "${WORK}/frontend" checkout --quiet "${REF}"
+
+    # Stamp a real version before building.
+    #
+    # The frontend's env.version() reads pyproject.toml and accepts a CalVer
+    # (YYYYMMDD.N); anything else falls back to the "0.0.0.dev0" placeholder,
+    # which then gets compiled into the wizard footer's build id and into the
+    # logger name. Injecting the version used to be the retired Core fork CI's
+    # job, and that step left with the fork — so every bundle produced since
+    # has carried the placeholder. An e2e test on the device already asserts
+    # the rendered version is NOT the placeholder, so shipping it means
+    # shipping a known-red test.
+    #
+    # It is stamped HERE, before the build, and never patched into the built
+    # bytes afterwards. Hand-correcting a vendored artifact downstream is
+    # exactly how the retired-path-prefix defect survived: the producer stayed
+    # wrong while the bytes looked right, and every rebuild reintroduced it.
+    GA_BUNDLE_CALVER="${GA_BUNDLE_CALVER:-$(date -u +%Y%m%d).0}"
+    case "${GA_BUNDLE_CALVER}" in
+      [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].[0-9]) ;;
+      *) echo "::error::GA_BUNDLE_CALVER must be YYYYMMDD.N, got '${GA_BUNDLE_CALVER}'" >&2; exit 1;;
+    esac
+    if ! grep -qE '^version[[:space:]]*=[[:space:]]*"0\.0\.0\.dev0"' "${WORK}/frontend/pyproject.toml"; then
+      echo "::error::${REF}'s pyproject.toml does not carry the expected placeholder — refusing to guess" >&2
+      grep -nE '^version' "${WORK}/frontend/pyproject.toml" >&2 || true
+      exit 1
+    fi
+    sed -i -E "s|^version([[:space:]]*)=([[:space:]]*)\"0\.0\.0\.dev0\"|version\1=\2\"${GA_BUNDLE_CALVER}\"|" \
+      "${WORK}/frontend/pyproject.toml"
+    grep -qF "\"${GA_BUNDLE_CALVER}\"" "${WORK}/frontend/pyproject.toml" || {
+      echo "::error::version injection did not take" >&2; exit 1; }
+    echo "==> Stamped frontend version ${GA_BUNDLE_CALVER}"
+
     echo "==> Building (${BUILD_CMD})"
     ( cd "${WORK}/frontend" && eval "${BUILD_CMD}" )
     OUT="${WORK}/frontend/${OUTPUT_ROOT}"
