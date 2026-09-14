@@ -1,3 +1,29 @@
+## 2.7.2
+
+### feat(wizard): dark-mode fix, a "Zurück" step, and real DE/EN localisation
+
+Re-vendors the setup-wizard bundle from greenautarky/frontend with three
+fixes from Ahmad's feedback (frontend PR `ga/wizard-feedback-fixes-512`):
+
+- **Dark-mode readability.** The "Betriebsnotwendige Daten" (tier-0) consent
+  card used a CSS variable defined nowhere, so its light fallback won in dark
+  mode and the heading rendered light-on-light. It now uses
+  `--secondary-background-color`, which is themed in both light and dark.
+- **A "Zurück" (back) step.** The wizard was forward-only. It now keeps a
+  step history and a `ga-setup-back` event, wires the browser Back button to
+  the same transition, and adds a back button to gdpr / info_pages /
+  analytics / ethernet — while structurally refusing to step back across the
+  PIN gate or back into account creation (which would mint a second account).
+  Returning to the analytics step restores the consent toggles.
+- **Real DE/EN localisation.** Every step now renders through `localize()`
+  from bundled German/English tables (the picker previously changed nothing
+  visible); the picker is restricted to German/English with German the
+  default. GDPR / DSGVO Art. 6 legal lines are **not** machine-translated —
+  they still show the reviewed German text pending a lawyer's English sign-off.
+
+Bundle provenance updated in `frontend.lock.yaml` + `frontend_bundle/BUILD-INFO.txt`;
+`scripts/build_bundle.sh --check` re-verifies the committed bytes.
+
 ## 2.7.1
 
 ### fix(wizard): `/` must reach the setup page, and must carry the label's PIN

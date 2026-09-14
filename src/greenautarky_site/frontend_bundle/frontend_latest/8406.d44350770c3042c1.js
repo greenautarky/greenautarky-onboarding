@@ -1,0 +1,2 @@
+export const __webpack_id__="8406";export const __webpack_ids__=["8406"];export const __webpack_modules__={28677:function(e,n,o){Object.defineProperty(n,"__esModule",{value:!0});var t=o(79030);"undefined"==typeof Intl&&("undefined"!=typeof window?Object.defineProperty(window,"Intl",{value:{}}):"undefined"!=typeof global&&Object.defineProperty(global,"Intl",{value:{}})),Object.defineProperty(Intl,"getCanonicalLocales",{value:t.getCanonicalLocales,writable:!0,enumerable:!1,configurable:!0})}};
+//# sourceMappingURL=8406.d44350770c3042c1.js.map
