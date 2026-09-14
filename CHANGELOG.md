@@ -1,3 +1,55 @@
+## Unreleased
+
+### fix(rooms-sync): one unmatchable room must not leave the whole flat unplaced
+
+`POST /api/greenautarky_site/rooms/sync` answered **500** for the entire
+request whenever a single room could not be created, and it did so *before*
+reaching the device placement at the end of the loop — so one room took every
+room's devices with it, and nothing downstream that reads an `area_id` (the
+heating engine, for one) had anything to read.
+
+**Cause.** Rooms/sync is not the only thing that creates areas; the
+device-placement path creates them too, and it has no ref to work with, so its
+areas carry `id = slug(name)`. `_find_area` matches **by ref only** — on
+purpose, and that decision stands: the name fallback it replaced made a room's
+identity depend on whatever text the installer happened to type. The ref
+therefore does not match, the handler falls into its `created` branch, and Home
+Assistant refuses a second area under a name already in use — by **raising**.
+`async_create` and `async_update` both raise it, the raise escaped the per-room
+loop, and the whole request died with it.
+
+**Fix, in two halves.**
+
+- **A room fails alone.** The per-room body is wrapped: a failure is counted,
+  named and reported *for that room*, and the batch carries on and still places
+  every device it can. The response gained `ok` / `failed` and a per-room
+  `ok` / `error`, and answers **207** rather than 200 when anything failed — a
+  batch that did not fully apply must not read as success. A batch with a
+  failure in it also sweeps nothing, because a failed room claims no area and
+  the sweep deletes unclaimed empty ones.
+- **A name collision is resolved, not thrown.** An area whose name *is* the
+  room's name is that room; it simply carries a slug id. Home Assistant fixes
+  an `area_id` at creation and offers no way to change it (`async_update` has
+  no `id` parameter), so the ref can never become the id — the mapping has to
+  be written down instead. It is written to the area's **alias**, using HA's
+  own indexed lookup: it lives in `core.area_registry` next to the id, survives
+  restarts and a reset of this component's store, and carries no uniqueness
+  constraint, so recording it cannot itself raise. `_find_area` gained that one
+  extra lookup — still keyed on the **ref**, still never on the name.
+
+The same recording repairs a sibling the code previously only warned about: a
+ref that does not survive HA's slugify round-trip (`room__1a4` → id
+`room_1a4`) produced a room its own ref could not address, and the next sync
+built a duplicate beside it or raised on the name.
+
+Nine tests, each demonstrated failing against the unfixed handler first. They
+assert the **outcome** — that devices end up carrying an `area_id` — not the
+status code, because a 200 with nothing placed is the exact failure being
+fixed here; a mutation that adopts the room, answers 200 and skips the
+placement turns five of them red. `_find_area`'s ref-only rule, the resident's
+rename signal, the sweep's safety properties and the legacy `type` contract are
+all unchanged and still covered.
+
 ## 2.7.2
 
 ### feat(wizard): dark-mode fix, a "Zurück" step, and real DE/EN localisation
