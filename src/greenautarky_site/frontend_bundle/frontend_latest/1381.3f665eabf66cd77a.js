@@ -1,2 +1,0 @@
-export const __webpack_id__="1381";export const __webpack_ids__=["1381"];export const __webpack_modules__={71252:function(e,t,a){a.r(t),a.d(t,{MapViewStrategy:()=>o});var _=a(76454),p=a(4200),c=a(87372);class o extends p.mN{static async generate(e,t){return{type:"panel",title:t.localize("panel.map"),icon:"mdi:map",cards:[{type:"map",auto_fit:!0,show_all:!0}]}}}o=(0,_.__decorate)([(0,c.EM)("map-view-strategy")],o)}};
-//# sourceMappingURL=1381.3f665eabf66cd77a.js.map

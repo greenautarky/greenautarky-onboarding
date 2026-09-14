@@ -1,0 +1,2 @@
+"use strict";(self.webpackChunkhome_assistant_frontend=self.webpackChunkhome_assistant_frontend||[]).push([["7453"],{75068:function(e,t,a){a.r(t),a.d(t,{MapViewStrategy:function(){return i}});var n=a(69868),s=a(84922),r=a(11991);class i extends s.mN{static async generate(e,t){return{type:"panel",title:t.localize("panel.map"),icon:"mdi:map",cards:[{type:"map",auto_fit:!0,show_all:!0}]}}}i=(0,n.__decorate)([(0,r.EM)("map-view-strategy")],i)}}]);
+//# sourceMappingURL=7453.7ea49faf8455e7fd.js.map
