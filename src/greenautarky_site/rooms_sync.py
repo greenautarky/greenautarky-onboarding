@@ -36,10 +36,18 @@ two bedrooms: the second room matched the first one by id and swallowed it,
 devices and all. So:
 
 ``ref``   a stable, opaque, never-reused key from GACI's own database. It
-          becomes the ``area_id``, and because HA fixes an id at creation and
-          keeps it through every rename, ``ref == area_id`` forever. That makes
-          the ref map a cache rather than a source of truth: lose it and a
-          re-sync still finds its rooms.
+          becomes the ``area_id`` wherever this handler creates the area, and
+          because HA fixes an id at creation and keeps it through every rename,
+          ``ref == area_id`` from then on. That makes the ref map a cache
+          rather than a source of truth: lose it and a re-sync still finds its
+          rooms.
+
+          Where the area ALREADY existed — device placement creates areas too,
+          under ``id = slug(name)`` — the id cannot be moved onto the ref, so
+          the ref is recorded as an ALIAS on that area instead (see
+          ``_remember_ref``). Identity is still the ref and still lives in the
+          registry rather than in this component's store; it is just read from
+          one of two places.
 ``kind``  a catalogue room type, written as an HA LABEL. The resident may
           remove it; ga_manager then reports ``area_kind=custom``, which is the
           honest answer. The pinned catalogue itself stays in ga_manager
@@ -137,12 +145,90 @@ def _find_area(registry: ar.AreaRegistry, ref: str | None):
 
     The seeded defaults are handled where they belong instead — see
     ``_sweep_unclaimed`` — and identity now comes from one place only.
+
+    TWO REF LOOKUPS, STILL ONE IDENTITY
+    -----------------------------------
+    ``ref == area_id`` is the normal case and stays first. The second lookup is
+    the ALIAS, and it is not the name fallback wearing a hat: an alias is only
+    ever on an area because a previous run of THIS handler wrote it there (see
+    ``_remember_ref``) for a room whose area already existed under an id Home
+    Assistant will not change. It is a mapping this code recorded, keyed on the
+    ref — not a guess at what the installer typed — so it cannot make a room's
+    identity depend on its display name, which is the whole reason the name
+    fallback went.
+
+    Raises ValueError when the ref is recorded on more than one area: that is
+    ambiguous rather than merely unknown, and guessing is how the removed
+    fallback produced orphans.
     """
-    if ref:
-        existing = registry.async_get_area(ref)
-        if existing is not None:
-            return existing, "id"
+    if not ref:
+        return None, None
+    existing = registry.async_get_area(ref)
+    if existing is not None:
+        return existing, "id"
+    by_alias = list(registry.async_get_areas_by_alias(ref))
+    if len(by_alias) > 1:
+        # Ids stay out of the message — for a resident-created room the id IS
+        # their room name, and this string travels off the device.
+        _LOGGER.error("rooms-sync: ref %r is on areas %s", ref,
+                      ", ".join(sorted(a.id for a in by_alias)))
+        raise ValueError(
+            f"ref {ref!r} is recorded on {len(by_alias)} areas — ambiguous"
+        )
+    if by_alias:
+        return by_alias[0], "ref_alias"
     return None, None
+
+
+def _remember_ref(registry: ar.AreaRegistry, area, ref: str | None):
+    """Write ``ref`` onto ``area`` as an alias, when the id could not carry it.
+
+    Home Assistant fixes an ``area_id`` at creation and offers no way to change
+    it — ``async_update`` has no ``id`` parameter — so an area that already
+    exists under a slug id can never be re-keyed onto GACI's ref. Without a
+    second place to write the ref down, every later sync looks for a room it
+    cannot find by id and builds a duplicate beside it. That is not a
+    hypothetical: the ``created`` branch below used to WARN about exactly this
+    and then leave it broken.
+
+    The alias registry is that second place, and it is the right one. It lives
+    in ``core.area_registry`` next to the id, so it survives a restart and a
+    reset of this component's store; Home Assistant indexes it
+    (``async_get_areas_by_alias``) using its OWN name normalisation, so no copy
+    of that rule lives here; and aliases carry no uniqueness constraint, so
+    recording one cannot raise.
+
+    A no-op when the id already IS the ref, which is the normal case — a room
+    that does not need the alias does not get one.
+    """
+    if not ref or area.id == ref or ref in area.aliases:
+        return area
+    _LOGGER.info(
+        "rooms-sync: area %s cannot carry ref %r as its id (ids are immutable) "
+        "— recording the ref as an alias so the next sync finds this room",
+        area.id, ref,
+    )
+    return registry.async_update(area.id, aliases=set(area.aliases) | {ref})
+
+
+def _rename(registry: ar.AreaRegistry, area, name: str):
+    """Rename ``area`` to ``name``; keep the room when the name is taken.
+
+    ``async_update`` enforces the same unique-name rule as ``async_create`` and
+    raises the same ValueError. A display name is the least load-bearing thing
+    about a room — the id, and the devices sitting in it, are what the heating
+    engine reads — so a name clash must cost the name, never the room.
+
+    Returns ``(area, conflict)``; ``conflict`` is None when the rename stuck.
+    """
+    if area.name == name:
+        return area, None
+    try:
+        return registry.async_update(area.id, name=name), None
+    except ValueError as exc:
+        _LOGGER.warning(
+            "rooms-sync: area %s keeps its current name (%s)", area.id, exc)
+        return area, str(exc)
 
 
 def _ensure_kind_label(hass: HomeAssistant, kind: str) -> str | None:
@@ -273,6 +359,7 @@ class GARoomsSyncView(HomeAssistantView):
         claimed: set[str] = set(installed)
 
         results: list[dict[str, Any]] = []
+        failures = 0
         for entry in rooms:
             if not isinstance(entry, dict):
                 return self.json({"message": "each room must be an object"}, status_code=400)
@@ -312,98 +399,177 @@ class GARoomsSyncView(HomeAssistantView):
                     status_code=400,
                 )
 
-            area, matched_on = _find_area(area_reg, ref)
-            created = area is None
+            # ONE ROOM MUST NOT FAIL THE FLAT. Everything below touches the
+            # registries, and every registry write can raise. Without this try
+            # block a single unmatchable room aborted the request at the first
+            # raise — BEFORE the device placement further down — so the heating
+            # engine found no valve in ANY room, because of one.
+            try:
+                area, matched_on = _find_area(area_reg, ref)
+                created = area is None
+                name_conflict = None
 
-            if created:
-                # Seeded under a name that slugifies to the ref, then renamed.
-                area = area_reg.async_create(_seed_name(ref) if ref else name)
-                if ref and area.id != ref:
-                    # Not fatal — the room exists and works. But GACI's ref no
-                    # longer addresses it, so a later sync would create a second
-                    # one. Loud, because it is silent corruption otherwise.
-                    _LOGGER.warning(
-                        "rooms-sync: wanted area_id %r for %r but Home Assistant "
-                        "assigned %r — a later sync will not find this room by "
-                        "its ref", ref, name, area.id,
-                    )
-                if area.name != name:
-                    area = area_reg.async_update(area.id, name=name)
+                if created:
+                    # Home Assistant refuses a second area with the same
+                    # normalised name and RAISES rather than returning, so ask
+                    # first — with HA's own lookup, the very function its guard
+                    # calls, so this answer cannot drift from the one it gives.
+                    #
+                    # This is not the name fallback `_find_area` dropped. It
+                    # runs only after ref matching has already failed, and only
+                    # over the set where the alternative is not "a separate
+                    # room" but a raised ValueError: HA will not create a room
+                    # under a name that is taken, now or ever. An area whose
+                    # name IS the room's name is that room — it simply carries
+                    # a slug id, because something other than this handler
+                    # created it (device placement does).
+                    holder = area_reg.async_get_area_by_name(name)
+                    if holder is not None:
+                        if holder.id in claimed:
+                            # Two rooms cannot share a name in HA, so this is a
+                            # real conflict in the payload — not something to
+                            # settle by taking the room off the first one.
+                            raise ValueError(
+                                "the area already holding this name belongs to "
+                                "another room in this sync"
+                            )
+                        area = _remember_ref(area_reg, holder, ref)
+                        created, matched_on = False, "adopted_name"
+                    else:
+                        # Seeded under a name that slugifies to the ref, then
+                        # renamed.
+                        area = area_reg.async_create(_seed_name(ref) if ref else name)
+                        area, name_conflict = _rename(area_reg, area, name)
+                        # HA appends `_2` when the id it derives is taken, so
+                        # the ref may not address the room. That used to be a
+                        # warning about corruption it then left in place; now
+                        # the ref is written where the next sync looks.
+                        area = _remember_ref(area_reg, area, ref)
 
-            renamed_by_resident = False
-            if not created:
-                previous = installed.get(area.id)
-                if previous is not None and _norm(previous) != _norm(area.name):
-                    # The resident renamed it. Report THAT, never the new name —
-                    # one bit, no content.
-                    renamed_by_resident = True
-                elif previous is None and _norm(area.name) != _norm(name):
-                    # Our own area, but the ref map is gone — the store was
-                    # reset while the registry survived. Because ref == area_id
-                    # the room is still identifiable, so re-adopt it rather than
-                    # building a duplicate next to it. This is the self-healing
-                    # half of using the ref as the id.
-                    area = area_reg.async_update(area.id, name=name)
+                renamed_by_resident = False
+                if not created:
+                    previous = installed.get(area.id)
+                    if previous is not None and _norm(previous) != _norm(area.name):
+                        # The resident renamed it. Report THAT, never the new
+                        # name — one bit, no content.
+                        renamed_by_resident = True
+                    elif previous is None and _norm(area.name) != _norm(name):
+                        # Our own area, but the ref map is gone — the store was
+                        # reset while the registry survived. Because ref ==
+                        # area_id the room is still identifiable, so re-adopt it
+                        # rather than building a duplicate next to it. This is
+                        # the self-healing half of using the ref as the id.
+                        area, name_conflict = _rename(area_reg, area, name)
 
-            # The kind rides as a LABEL, so the id stays pure identity.
-            kind_applied = None
-            if kind:
-                label_id = _ensure_kind_label(hass, kind)
-                if label_id is not None:
-                    if kind_name and (lab := lr.async_get(hass).async_get_label(label_id)) \
-                            and lab.name != kind_name:
-                        lr.async_get(hass).async_update(label_id, name=kind_name)
-                    if label_id not in area.labels:
-                        area = area_reg.async_update(
-                            area.id, labels=set(area.labels) | {label_id})
-                    kind_applied = label_id
+                # The kind rides as a LABEL, so the id stays pure identity.
+                kind_applied = None
+                if kind:
+                    label_id = _ensure_kind_label(hass, kind)
+                    if label_id is not None:
+                        if kind_name and (lab := lr.async_get(hass).async_get_label(label_id)) \
+                                and lab.name != kind_name:
+                            try:
+                                lr.async_get(hass).async_update(label_id, name=kind_name)
+                            except ValueError as exc:
+                                # Same unique-name rule as areas. A label's
+                                # display name is cosmetic; the room is not.
+                                _LOGGER.warning(
+                                    "rooms-sync: label %s keeps its current name (%s)",
+                                    label_id, exc)
+                        if label_id not in area.labels:
+                            area = area_reg.async_update(
+                                area.id, labels=set(area.labels) | {label_id})
+                        kind_applied = label_id
 
-            installed[area.id] = name
-            claimed.add(area.id)
+                installed[area.id] = name
+                claimed.add(area.id)
 
-            assigned, unknown = 0, []
-            for raw in members:
-                ieee = str(raw).strip().lower()
-                device_id = by_ieee.get(ieee)
-                if device_id is None:
-                    # Almost always "not interviewed yet" rather than an error:
-                    # the sensor has not appeared in the device registry. Named
-                    # so the caller can retry rather than assuming success.
-                    unknown.append(ieee)
-                    continue
-                dev_reg.async_update_device(device_id, area_id=area.id)
-                assigned += 1
+                assigned, unknown = 0, []
+                for raw in members:
+                    ieee = str(raw).strip().lower()
+                    device_id = by_ieee.get(ieee)
+                    if device_id is None:
+                        # Almost always "not interviewed yet" rather than an
+                        # error: the sensor has not appeared in the device
+                        # registry. Named so the caller can retry rather than
+                        # assuming success.
+                        unknown.append(ieee)
+                        continue
+                    dev_reg.async_update_device(device_id, area_id=area.id)
+                    assigned += 1
 
-            results.append({
-                "name": name,
-                "ref": ref,
-                "kind": kind_applied,
-                # Kept so a pre-2.5.0 GACI reads what it always read.
-                "type": ref,
-                # PLAIN area_id on purpose: ga_manager turns it into area_ref
-                # with its own salt before anything leaves the device.
-                "area_id": area.id,
-                "created": created,
-                "matched_on": matched_on,
-                "renamed_by_resident": renamed_by_resident,
-                "members_assigned": assigned,
-                "members_unknown": unknown,
-            })
+                results.append({
+                    "name": name,
+                    "ref": ref,
+                    "kind": kind_applied,
+                    # Kept so a pre-2.5.0 GACI reads what it always read.
+                    "type": ref,
+                    # PLAIN area_id on purpose: ga_manager turns it into
+                    # area_ref with its own salt before anything leaves the
+                    # device.
+                    "area_id": area.id,
+                    "ok": True,
+                    "error": None,
+                    "created": created,
+                    "matched_on": matched_on,
+                    "name_conflict": name_conflict,
+                    "renamed_by_resident": renamed_by_resident,
+                    "members_assigned": assigned,
+                    "members_unknown": unknown,
+                })
+            except Exception as exc:  # broad ON PURPOSE — reported, not swallowed
+                # Counted and named per room, so the answer can never read as a
+                # bare success over a batch that did not fully apply.
+                failures += 1
+                _LOGGER.error("rooms-sync: room %r (ref %r) failed: %s",
+                              name, ref, exc, exc_info=True)
+                results.append({
+                    "name": name,
+                    "ref": ref,
+                    "kind": None,
+                    "type": ref,
+                    "area_id": None,
+                    "ok": False,
+                    "error": f"{type(exc).__name__}: {exc}",
+                    "created": False,
+                    "matched_on": None,
+                    "name_conflict": None,
+                    "renamed_by_resident": False,
+                    "members_assigned": 0,
+                    "members_unknown": [],
+                })
 
-        swept = _sweep_unclaimed(hass, claimed) if first_sync else []
+        # A failed room claimed no area, so an area that SHOULD have been
+        # claimed can look unclaimed. Deleting on that picture is exactly the
+        # mistake the sweep's three safety properties exist to prevent, so a
+        # batch with any failure in it sweeps nothing.
+        swept = _sweep_unclaimed(hass, claimed) if first_sync and not failures else []
 
         state[STATE_KEY] = installed
         await _get_store(hass).async_save(state)
 
         _LOGGER.info(
             "rooms-sync: %d room(s) — %d created, %d device(s) placed, %d unknown, "
-            "%d unclaimed area(s) swept",
+            "%d unclaimed area(s) swept, %d room(s) FAILED",
             len(results),
             sum(1 for r in results if r["created"]),
             sum(r["members_assigned"] for r in results),
             sum(len(r["members_unknown"]) for r in results),
             len(swept),
+            failures,
         )
         # `swept` carries plain area_ids, which for a resident-created room is
         # their room name. It stays a COUNT on the wire.
-        return self.json({"rooms": results, "swept": len(swept)})
+        payload = {
+            "rooms": results,
+            "swept": len(swept),
+            "ok": failures == 0,
+            "failed": failures,
+        }
+        # 207 rather than 200 when a room failed: a caller that checks for 200
+        # sees the difference, and one that only checks 2xx still finds `ok`
+        # false and a non-zero `failed` in the body it already parses. What
+        # must not happen is a bare 200 over a batch that did not fully apply —
+        # the rooms that DID apply are applied, and that is a partial success,
+        # not a success.
+        return self.json(payload, status_code=200 if not failures else 207)
