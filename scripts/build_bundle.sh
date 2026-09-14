@@ -44,6 +44,87 @@ hash_bundle() {
   )
 }
 
+# --- the bundle and the component must agree on where things live -----------
+#
+# WHY: on 2026-09-14 a release shipped a wizard bundle built from a pre-rename
+# tree. It requested /greenautarky_onboarding_static/ and 7x
+# /api/greenautarky_onboarding/*, while the component serves URL_BASE
+# (/greenautarky_site_static) and /api/$DOMAIN. Everything 404'd and a freshly
+# flashed device rendered a blank page — no wizard, no onboarding at all.
+#
+# Nothing caught it. --check verified the bytes were unchanged and the file set
+# intact; both were true. Neither answers whether the bytes are RIGHT. Two
+# sources claim the same truth here — the component's constants and the paths
+# compiled into the bundle — and they sat side by side in one repo, uncompared.
+#
+# The constants are read from the LIVE source, never restated here: a check
+# that re-declares the value it guards tests a copy of itself and stays green
+# while the real thing rots.
+verify_bundle_agrees_with_component() {
+  local init="${REPO_ROOT}/src/greenautarky_site/__init__.py"
+  local constf="${REPO_ROOT}/src/greenautarky_site/const.py"
+  local url_base domain rc=0
+
+  url_base="$(sed -n 's/^URL_BASE = "\(.*\)"$/\1/p' "${init}" 2>/dev/null | head -1)"
+  domain="$(sed -n 's/^DOMAIN = "\(.*\)"$/\1/p' "${constf}" 2>/dev/null | head -1)"
+
+  # If the live definition cannot be read, FAIL — never skip. A guard that
+  # quietly stops guarding is worse than no guard, because the green stays.
+  [ -n "${url_base}" ] || {
+    echo "::error::cannot read URL_BASE from ${init} — the gate cannot verify anything" >&2; return 1; }
+  [ -n "${domain}" ] || {
+    echo "::error::cannot read DOMAIN from ${constf} — the gate cannot verify anything" >&2; return 1; }
+
+  local js_files
+  js_files="$(find "${BUNDLE}" -type f -name '*.js' | LC_ALL=C sort)"
+  [ -n "${js_files}" ] || {
+    echo "::error::no .js files found under ${BUNDLE} — nothing was inspected" >&2; return 1; }
+
+  # 1. Every "<something>_static/" prefix must be the component's URL_BASE.
+  local seen_static=0 p
+  while IFS= read -r p; do
+    [ -n "${p}" ] || continue
+    seen_static=$((seen_static+1))
+    if [ "${p}" != "${url_base}/" ]; then
+      echo "::error::bundle requests ${p} but the component serves ${url_base}/ (URL_BASE)" >&2
+      rc=1
+    fi
+  done <<< "$(echo "${js_files}" | xargs grep -hoE '/[A-Za-z0-9_]+_static/' 2>/dev/null | LC_ALL=C sort -u)"
+
+  # 2. Every GA api namespace must be the component's DOMAIN. Stock Home
+  #    Assistant namespaces (/api/image/, /api/hassio/, /api/webhook/, ...) are
+  #    legitimate and must NOT be flagged — a gate that flags everything gets
+  #    overridden by reflex, which is a slower way of having no gate.
+  local seen_api=0
+  while IFS= read -r p; do
+    [ -n "${p}" ] || continue
+    seen_api=$((seen_api+1))
+    if [ "${p}" != "/api/${domain}/" ]; then
+      echo "::error::bundle calls ${p} but the component registers /api/${domain}/ (DOMAIN)" >&2
+      rc=1
+    fi
+  done <<< "$(echo "${js_files}" | xargs grep -hoE '/api/greenautarky[A-Za-z0-9_]*/' 2>/dev/null | LC_ALL=C sort -u)"
+
+  # Coverage, not exit code: a scan that inspected nothing is a failure, not a
+  # pass. This is the shape that let the defect ship in the first place.
+  if [ "${seen_static}" -eq 0 ] && [ "${seen_api}" -eq 0 ]; then
+    echo "::error::inspected $(echo "${js_files}" | wc -l) bundle files and found NO component path references — the gate matched nothing and cannot be trusted" >&2
+    return 1
+  fi
+
+  # 3. A release artifact must not carry a dev-build version placeholder.
+  local stamped
+  stamped="$(echo "${js_files}" | xargs grep -lF '0.0.0.dev0' 2>/dev/null | head -3)"
+  if [ -n "${stamped}" ]; then
+    echo "::error::bundle carries the 0.0.0.dev0 placeholder — a dev build was vendored into a release:" >&2
+    echo "${stamped}" | sed 's|^|::error::  |' >&2
+    rc=1
+  fi
+
+  [ "${rc}" -eq 0 ] && echo "frontend_bundle agrees with the component — ${url_base}/ + /api/${domain}/ (${seen_static} static, ${seen_api} api reference(s))"
+  return "${rc}"
+}
+
 MODE="${1:---check}"
 case "${MODE}" in
   --hash)
@@ -62,6 +143,8 @@ case "${MODE}" in
       exit 1
     fi
     echo "frontend_bundle OK — $(grep -c . "${SUMS}") files match SHA256SUMS"
+    # Unchanged bytes and an intact file set are not the same as CORRECT bytes.
+    verify_bundle_agrees_with_component || exit 1
     ;;
 
   --regen)
