@@ -27,7 +27,10 @@ frontend:
 # on the component's own publicPath, because the vendored
 # bundle only ships greenautarky-setup.* and code-split chunks 404 on a
 # stock Core (/frontend_latest belongs to the ha-frontend PyPI package).
-  ref: "2d0609e2e"
+  # Branch ga/wizard-feedback-fixes-512 (4 commits on 2d0609e2e) — Ahmad's
+  # feedback: dark-mode tier-0 card fix, a "Zurück" (back) step with
+  # browser-Back parity, and real DE/EN localisation of every step.
+  ref: "91965de6a"
   entry: greenautarky-setup
   # Install deps first so --regen works on a fresh clone (CI runner or a fresh
   # local checkout). corepack pins the yarn the repo declares; idempotent when
