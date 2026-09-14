@@ -78,8 +78,21 @@ _case "zero coverage — a scan that inspected nothing" fail "${GOOD_URLBASE}" "
 _case "URL_BASE unreadable — must FAIL, never skip" fail "# URL_BASE was renamed away" "${GOOD_DOMAIN}" \
   "${GOOD_JS}"
 
+# --- the runtime-assembled shape: no literal path to grep at all -------------
+# Found 2026-09-14 by testing this gate against the shape the FIXED producer
+# emits. It derives every URL from one constant, so /api/<domain>/ never
+# appears as a literal — and the api check above silently dropped to zero
+# references and passed a bundle whose constant had been flipped back. A gate
+# that can no longer fail is the defect it exists to catch, in its own mirror.
+_case "runtime-assembled path, constant flipped to the retired namespace" fail \
+  "${GOOD_URLBASE}" "${GOOD_DOMAIN}" \
+  '.p="/greenautarky_site_static/frontend_latest/";const a=JSON.parse(String.raw`{"b":"greenautarky_onboarding"}`).b,i=`/api/${a}`;fetch(`${i}/status`)'
+
 # --- must-pass: correct bundles, including stock HA namespaces --------------
 _case "correct paths + stock HA namespaces" pass "${GOOD_URLBASE}" "${GOOD_DOMAIN}" "${GOOD_JS}"
+_case "runtime-assembled path, constant correct — no literal to grep" pass \
+  "${GOOD_URLBASE}" "${GOOD_DOMAIN}" \
+  '.p="/greenautarky_site_static/frontend_latest/";const a=JSON.parse(String.raw`{"b":"greenautarky_site"}`).b,i=`/api/${a}`;fetch(`${i}/status`);fetch("/api/image/1")'
 _case "a future rename, applied consistently to both sides" pass \
   'URL_BASE = "/ga_wizard_static"' 'DOMAIN = "ga_wizard"' \
   'fetch("/api/ga_wizard/status");u="/ga_wizard_static/x.js";i="/api/image/1"'

@@ -105,9 +105,30 @@ verify_bundle_agrees_with_component() {
     fi
   done <<< "$(echo "${js_files}" | xargs grep -hoE '/api/greenautarky[A-Za-z0-9_]*/' 2>/dev/null | LC_ALL=C sort -u)"
 
+  # 2b. The two checks above only see paths spelled out as LITERALS. A bundle
+  #     that assembles its API path at runtime from a constant
+  #     (`/api/${domain}`) has no literal to grep — and a gate that silently
+  #     stops matching is worse than no gate, because the green stays. Measured
+  #     2026-09-14: with the producer fixed to derive paths from one constant,
+  #     the api check above dropped to ZERO references and happily passed a
+  #     bundle whose constant had been flipped back to the retired namespace.
+  #
+  #     So the real discriminator is the NAMESPACE TOKEN, wherever it appears:
+  #     every greenautarky_* token in the bundle must be the component's own
+  #     DOMAIN (or its static mount, which is DOMAIN + "_static").
+  local seen_token=0 tok
+  while IFS= read -r tok; do
+    [ -n "${tok}" ] || continue
+    seen_token=$((seen_token+1))
+    if [ "${tok}" != "${domain}" ] && [ "${tok}" != "${domain}_static" ]; then
+      echo "::error::bundle carries the namespace token '${tok}' but the component is '${domain}'" >&2
+      rc=1
+    fi
+  done <<< "$(echo "${js_files}" | xargs grep -hoE 'greenautarky_[a-z0-9_]+' 2>/dev/null | LC_ALL=C sort -u)"
+
   # Coverage, not exit code: a scan that inspected nothing is a failure, not a
   # pass. This is the shape that let the defect ship in the first place.
-  if [ "${seen_static}" -eq 0 ] && [ "${seen_api}" -eq 0 ]; then
+  if [ "${seen_static}" -eq 0 ] && [ "${seen_api}" -eq 0 ] && [ "${seen_token}" -eq 0 ]; then
     echo "::error::inspected $(echo "${js_files}" | wc -l) bundle files and found NO component path references — the gate matched nothing and cannot be trusted" >&2
     return 1
   fi
@@ -121,7 +142,7 @@ verify_bundle_agrees_with_component() {
     rc=1
   fi
 
-  [ "${rc}" -eq 0 ] && echo "frontend_bundle agrees with the component — ${url_base}/ + /api/${domain}/ (${seen_static} static, ${seen_api} api reference(s))"
+  [ "${rc}" -eq 0 ] && echo "frontend_bundle agrees with the component — ${url_base}/ + /api/${domain}/ (${seen_static} static, ${seen_api} api, ${seen_token} namespace token(s))"
   return "${rc}"
 }
 
