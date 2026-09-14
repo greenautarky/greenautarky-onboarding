@@ -1,4 +1,58 @@
-## Unreleased
+## 2.7.3
+
+### fix(wizard): the bundle asks for the paths the component actually serves
+
+A freshly flashed device rendered a **blank page** for the setup wizard: the
+vendored bundle requested a retired static mount and a retired API namespace,
+every request 404'd, the panel element never upgraded, and onboarding was
+impossible.
+
+**The cause is structural, and that is the part worth remembering.** The
+component's namespace had never existed in the producer repository — not on any
+branch, not in any commit. The bundle that had been correct for months was
+correct because its paths were rewritten *after* vendoring. So nothing was
+stale: **every rebuild reproduced the defect**, and the day someone rebuilt, the
+wizard died. Correcting the bytes again would have held until the next rebuild.
+
+Fixed in the producer instead: every GA URL now derives from one domain
+constant, so the two sides cannot drift.
+
+### fix(bundle): stamp a real version before building
+
+The wizard footer's build id and the frontend logger name carried the
+`0.0.0.dev0` placeholder. The producer's version resolver reads its own project
+metadata and accepts a CalVer; injecting one used to be the retired Core fork
+CI's step and left with the fork, so every bundle produced since carried the
+placeholder — while an e2e test on the device already asserts the rendered
+version is *not* that placeholder. `--regen` now stamps a CalVer into the clone
+**before** the build, validates the format, and refuses rather than guesses if
+the placeholder it expects is absent. It is never patched into the built bytes:
+hand-correcting a vendored artifact downstream is the habit that caused the
+defect above.
+
+### ci(bundle): the bundle and the component must agree on where things live
+
+`--check` verified that the committed bytes were unchanged and the file set
+intact. Both were true; neither answers whether the bytes are *right*. Two
+sources claimed the same truth side by side in this repo and nothing compared
+them. It now asserts that every static prefix matches `URL_BASE`, every
+`greenautarky*` API namespace matches `DOMAIN`, every namespace token is the
+component's own (the panel's i18n namespace is derived from the entry name;
+sibling components are an explicit, commented list), and that no dev placeholder
+is present. Constants are read from the live source, never restated. If a
+constant cannot be read, or the scan inspects zero files or matches zero
+references, the gate **fails** — it never skips.
+
+`tests/gates/bundle_paths/selftest.sh` drives the real script over throwaway
+fixtures in both directions — 13 cases, 8 must-fail and 5 must-pass — and runs
+on every PR. must-pass is not padding: a gate that flags everything is
+overridden by reflex, so the stock Home Assistant namespaces, the panel's own
+i18n keys, a WebSocket call to a real sibling component and a
+consistently-applied future rename are all pinned as cases that must *not* fire.
+
+**A comparison gate catches two sources that disagree. It cannot catch two that
+agree because someone keeps correcting one of them** — there, remove the second
+source instead.
 
 ### fix(rooms-sync): one unmatchable room must not leave the whole flat unplaced
 
