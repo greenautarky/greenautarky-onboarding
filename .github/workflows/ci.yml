@@ -45,11 +45,21 @@ jobs:
           [ "$py_ver" = "$mf_ver" ] || { echo "::error::version drift"; exit 1; }
 
   bundle-integrity:
-    # Offline content-hash gate: the committed frontend_bundle/ bytes must
-    # match SHA256SUMS. Catches a stale/frozen or tampered bundle without
-    # cloning or building the (archived) frontend fork.
+    # Offline gate on the committed frontend_bundle/. Two questions, and they
+    # are NOT the same one:
+    #   1. are the bytes unchanged and the file set intact?  (SHA256SUMS)
+    #   2. are they the RIGHT bytes?                         (paths vs component)
+    # On 2026-09-14 (1) was green while (2) was false: the bundle asked for a
+    # pre-rename path prefix and API namespace, everything 404'd, and a freshly
+    # flashed device rendered a blank page. --check now answers both.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Verify frontend bundle content-hash
+      - name: Verify frontend bundle content-hash and agreement with the component
         run: scripts/build_bundle.sh --check
+
+      # The gate must be able to go both red and green, and a mutation must
+      # turn the SPECIFIC case red. Proven on every PR so the gate cannot rot
+      # into decoration between the day it is written and the day it is needed.
+      - name: Gate self-test (must-fail and must-pass fixtures)
+        run: ./tests/gates/bundle_paths/selftest.sh
