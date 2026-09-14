@@ -20,9 +20,33 @@
 #      verified. "Looks unused" is not a revocation.
 #   3. It pins exact commit fingerprints. Never a bare path or a rule — that
 #      would silence every future secret in the same file.
+#
+# SECOND CLASS — FALSE POSITIVES IN VENDORED BUILD ARTIFACTS (added 2026-09-14):
+# The three rules above are written for a credential that was REALLY committed
+# and then revoked. A vendored, minified bundle is a different case: gitleaks'
+# `generic-api-key` rule fires on ENTROPY, so ordinary data strings inside the
+# built frontend trip it. Fingerprints are the wrong instrument there, because
+# the bundle filenames carry content hashes — every rebuild mints new
+# fingerprints and the gate goes red again, which is exactly the
+# "permanently red gate stops being read" failure this file warns about.
+# For that class, allowlist BY VALUE SHAPE (a regex that matches only the
+# benign data), never by path and never by rule: a real secret in the same
+# bundle must still trip the gate.
 
 title = "greenautarky-onboarding"
 
 [extend]
 # Keep every upstream rule; this file only exists to add allowlist entries.
 useDefault = true
+
+# IANA timezone identifiers in the vendored frontend bundle (the wizard ships a
+# timezone picker). `generic-api-key` matched "Pacific/Enderbury" on entropy in
+# both build variants of chunk 597 on 2026-09-14 (site 2.7.2). Not a secret and
+# never was one — no credential to revoke. Value-scoped on purpose: this exempts
+# only timezone-shaped strings anywhere, so it cannot hide a real key in the same
+# file, and it survives the content-hash rename on every bundle rebuild.
+[allowlist]
+description = "IANA timezone identifiers in the vendored frontend bundle are data, not secrets"
+regexes = [
+  '''\b(?:Africa|America|Antarctica|Arctic|Asia|Atlantic|Australia|Europe|Indian|Pacific|Etc)/[A-Za-z0-9_+\-]+\b''',
+]
