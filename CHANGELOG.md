@@ -1,4 +1,4 @@
-## Unreleased
+## 2.7.4 — 2026-09-15
 
 ### fix(sidebar): the stock-panel sweep is an invariant, not a schedule
 
