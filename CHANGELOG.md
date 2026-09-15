@@ -1,3 +1,46 @@
+## 2.7.5 — 2026-09-15
+
+### fix(rooms-sync): a re-sync must not collide with the rooms it installed itself
+
+Measured on a canary on 2026-09-15:
+`rooms-sync: 3 of 3 room(s) FAILED: Office (ValueError), Schlafzimmer
+(ValueError), Wohnzimmer (ValueError)` — on **every** re-sync. Two of four
+thermostats therefore never reached a room, and the heating engine had no valve
+to work with.
+
+`claimed` is documented and read as "areas taken **during this run**" — the
+name-collision guard raises on it, and `_sweep_unclaimed` refuses to delete on
+it. It was seeded from `installed`, the ref map of **earlier** syncs. So on a
+re-sync every room collided with the area it had installed itself, and said
+`the area already holding this name belongs to another room in this sync`,
+which was true of none of them.
+
+It bit the flats installed by a pre-2.5.0 build and only those: back then
+`_find_area` matched BY NAME, so the ref map was written under the areas'
+name-derived ids and no ref alias was ever recorded (`_remember_ref` did not
+exist). Ref-only matching cannot find those areas, the handler falls through to
+the name lookup, and the guard sees an id that is in the ref map. Worse, the
+guard was **self-perpetuating**: it raised before `_remember_ref` could write
+the alias down, so the state that triggered it was never repaired and the next
+sync failed identically.
+
+* `claimed` now holds only what this run took. The sweep is unaffected by
+  construction: it runs only when `first_sync`, i.e. only when the ref map is
+  empty — exactly the case where the old seeding contributed nothing.
+* The message no longer lies. A genuine collision (two rooms in ONE request
+  asking for one name) now names the request and the ref of the room that took
+  the name; the adoption path says out loud what it found — which area, that it
+  carries no ref alias, and whether an earlier sync had installed it. Area ids
+  stay in the log, because for a resident-made room the id is their room name.
+* The first re-sync now **heals** the flat: it adopts by name, records the ref
+  as an alias, and every sync after that matches on `ref_alias`.
+
+Three new tests, all red against 2.7.4: the real field shape (areas under
+name-derived ids with no alias + a pre-populated ref map + separate `ref`/`kind`),
+the heal, and the honest message. The pre-2.5.0 `type` test that passed through
+all of this is kept — it describes older GACI builds correctly, it was merely
+insufficient.
+
 ## 2.7.4 — 2026-09-15
 
 ### fix(sidebar): the stock-panel sweep is an invariant, not a schedule

@@ -272,7 +272,11 @@ def _sweep_unclaimed(hass: HomeAssistant, claimed: set[str]) -> list[str]:
     Three properties make this safe, and it is NOT ``replace``:
 
     * it runs only on the first sync, when the ref map is still empty — at that
-      moment no resident exists, so nothing empty can be theirs;
+      moment no resident exists, so nothing empty can be theirs. That same
+      condition is why ``claimed`` may hold only what THIS run took: when the
+      sweep runs, the ref map is empty, so there is nothing else it could have
+      held. A later sync never reaches here at all
+      (``test_a_later_sync_does_not_sweep_a_room_the_resident_created``);
     * it only ever touches areas holding no device and no entity;
     * it runs AFTER the new rooms exist, so the registry is never empty and
       ``site_defaults`` cannot re-seed into the gap.
@@ -356,7 +360,24 @@ class GARoomsSyncView(HomeAssistantView):
         # Empty ref map == nobody has ever synced this device. That is the only
         # moment the sweep may run; see _sweep_unclaimed.
         first_sync = not installed
-        claimed: set[str] = set(installed)
+        # AREAS TAKEN DURING THIS RUN, and nothing else.
+        #
+        # This used to be seeded from `installed` — the ref map of EARLIER
+        # syncs — while every reader treats it as "claimed in this sync". On a
+        # flat installed by a pre-2.5.0 build (areas under name-derived ids,
+        # no ref alias, ref map keyed on those ids) that made every room
+        # collide with the area it had installed itself, and say so in words
+        # that were not true of any of them. Measured on a canary on
+        # 2026-09-15: 3 of 3 rooms failed on every re-sync, and the thermostats
+        # in them never reached a room.
+        #
+        # The sweep reads this too, and is NOT affected: it runs only when
+        # `first_sync` — i.e. only when `installed` is empty, which is exactly
+        # when the old seeding contributed nothing. See _sweep_unclaimed.
+        claimed: set[str] = set()
+        # {area_id: the ref of the room that took it}, so a REAL collision can
+        # name the room it collided with instead of gesturing at one.
+        claimed_by: dict[str, str | None] = {}
 
         results: list[dict[str, Any]] = []
         failures = 0
@@ -429,10 +450,44 @@ class GARoomsSyncView(HomeAssistantView):
                             # Two rooms cannot share a name in HA, so this is a
                             # real conflict in the payload — not something to
                             # settle by taking the room off the first one.
-                            raise ValueError(
-                                "the area already holding this name belongs to "
-                                "another room in this sync"
+                            #
+                            # The message says which request and which room,
+                            # because the old one ("another room in this sync")
+                            # was also what a re-sync of an installed flat got,
+                            # where it was false and cost an hour. It carries
+                            # only values GACI itself sent — the name it chose
+                            # and the other room's opaque ref. The area_id goes
+                            # to the log: for a resident-made room the id IS
+                            # their room name and this string leaves the device.
+                            _LOGGER.error(
+                                "rooms-sync: room %r (ref %r) wants the name held "
+                                "by area %s, which room %r already took in this "
+                                "request", name, ref, holder.id,
+                                claimed_by.get(holder.id),
                             )
+                            raise ValueError(
+                                f"the name {name!r} was already taken in this "
+                                f"request by the room with ref "
+                                f"{claimed_by.get(holder.id)!r}; two rooms cannot "
+                                "share a name in Home Assistant"
+                            )
+                        # An area this handler did not create, holding this
+                        # room's name. Said out loud with what was actually
+                        # found, because the same input used to raise: no ref
+                        # this handler could match, and — when an older build
+                        # installed this flat — already in the ref map under
+                        # its own id. Stating the alias set rather than
+                        # asserting it is empty: adoption is also reached when
+                        # the area carries aliases that are simply not this ref.
+                        _LOGGER.info(
+                            "rooms-sync: adopting area %s for ref %r — it holds "
+                            "this room's name, its aliases are %s, and it %s. "
+                            "Recording the ref now so the next sync matches on it.",
+                            holder.id, ref, sorted(holder.aliases) or "empty",
+                            "was already installed by an earlier sync"
+                            if holder.id in installed else
+                            "was created outside this handler (device placement)",
+                        )
                         area = _remember_ref(area_reg, holder, ref)
                         created, matched_on = False, "adopted_name"
                     else:
@@ -483,6 +538,7 @@ class GARoomsSyncView(HomeAssistantView):
 
                 installed[area.id] = name
                 claimed.add(area.id)
+                claimed_by[area.id] = ref
 
                 assigned, unknown = 0, []
                 for raw in members:
