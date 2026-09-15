@@ -1,3 +1,73 @@
+## Unreleased
+
+### fix(sidebar): the stock-panel sweep is an invariant, not a schedule
+
+Measured on a canary on 2026-09-15, logged in as the resident account the
+wizard creates: four of the six panels in `GA_HIDDEN_DEFAULT_PANELS` were gone
+and `map` and `todo` were still in the sidebar — the two the sweep had been
+*extended for*. Its docstring named `todo` as the reason the second run existed.
+
+Neither startup ordering nor a Core rename explains it. **Both survivors are
+registered by Home Assistant's own onboarding completion**, which on a GA device
+happens while the resident walks through our wizard, long after the last sweep:
+`POST /api/onboarding/core_config` creates a `shopping_list` config entry whose
+`todo` platform registers the `todo` panel, and lovelace's onboarding listener
+creates the `map` dashboard, whose collection listener registers the `map`
+panel. The four that did disappear arrive via `default_config` at boot, which is
+why the first run caught them and the defect looked like "two panels are
+special".
+
+So the defect class is a one-shot mutation of a registry other integrations keep
+writing to; any fixed number of sweeps loses the same race at the next
+registration. The component now subscribes to `frontend.EVENT_PANELS_UPDATED` —
+the registry's own change signal — and re-establishes the invariant whenever the
+registry changes. Edge-triggered on the exact mutation, not a timer polling for
+one, and it terminates: a removal fires the event once more and the next pass
+finds nothing.
+
+The tests assert the panel registry's CONTENTS at each of the three moments a
+panel can appear (before setup, between setup and started, after started), not
+that a function was called — the previous design proved the call, and the call
+was never the outcome.
+
+### fix(config): `hide_default_panels` is read, after being documented for months
+
+The sweep's comment had promised *"reversible without a redeploy: set
+`greenautarky_site: hide_default_panels: false`"* since the day it was written.
+Nothing read the key. `CONFIG_SCHEMA` was `cv.empty_config_schema(DOMAIN)`,
+which does not raise — it logs *"the greenautarky_site integration does not
+support any configuration parameters"* at ERROR and hands the config on. So an
+operator who followed the comment got a config error saying the key does not
+exist **and** a sweep that ran anyway.
+
+The schema now accepts the documented key (and still accepts the bare
+`greenautarky_site:` that ga_manager's converge writes), rejects a typo inside
+the block instead of ignoring it, and the option gates the sweep.
+
+### fix(dashboards): the personal board is not a sidebar entry
+
+A resident's sidebar carried a panel named after their own username,
+`ga-home-<slug>`. That is not a stock-HA leak: **we** register it, with a
+sidebar title and an icon. It is now registered with `sidebar_title=None` /
+`sidebar_icon=None`, which is HA's own mechanism — `ha-sidebar.ts`'s
+`computePanels` skips any non-default panel with a falsy title, the oldest and
+most portable of the three filters there.
+
+The board itself is untouched: the panel stays registered, `/ga-home-<slug>`
+still resolves, its config still loads, and the master console still manages it.
+`ga-home` (the strategy HA's default Overview renders through) and
+`ga-home-<slug>` (a per-user board) share a prefix and nothing else — a test
+asserts the Übersicht survives, so a future prefix match cannot quietly take it.
+
+### docs: `docs/RESIDENT-SIDEBAR.md`
+
+The three mechanisms that decide what a resident's sidebar holds, which are
+ours, and why the header search control is **not cleanly removable** from a
+custom component — HA's only supported flag for it, `hass.kioskMode`, is
+client-side only and also removes the sidebar and the menu button. Written down
+with the cost of doing it anyway, so the question does not get re-opened from
+memory.
+
 ## 2.7.3
 
 ### fix(wizard): the bundle asks for the paths the component actually serves

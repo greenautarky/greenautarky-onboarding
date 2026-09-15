@@ -108,7 +108,8 @@ async def _register(
         "title": title,
         "icon": "mdi:account-circle",
         "require_admin": False,
-        "show_in_sidebar": True,
+        # NOT in the sidebar — see the panel registration below for why.
+        "show_in_sidebar": False,
         "mode": "storage",
     }
     store_obj = lovelace_dashboard.LovelaceStorage(hass, item)
@@ -122,14 +123,32 @@ async def _register(
         await store_obj.async_save(_starter_config(title))
 
     if url_path not in (hass.data.get(frontend.DATA_PANELS) or {}):
+        # Registered WITHOUT a sidebar title or icon, on purpose.
+        #
+        # The panel has to exist — that is what makes `/ga-home-<slug>` resolve
+        # and what lets the board render at all. But it must not be a sidebar
+        # ENTRY: a resident found their own username sitting in the sidebar as
+        # a second, near-empty dashboard next to the Übersicht (canary,
+        # 2026-09-15), which is noise for everyone and confusing for a sub-user
+        # whose board holds only what a master assigned them.
+        #
+        # `sidebar_title=None` is the mechanism, and it is HA Core's own:
+        # `ha-sidebar.ts` / `computePanels` skips any non-default panel whose
+        # `title` is falsy. It is the oldest and most portable of the three
+        # filters there (`show_in_sidebar` and `default_visible` are newer and
+        # not present on every frontend we ship against), so it is the one a
+        # device on an older frontend still honours.
+        #
+        # The board is reached from the master console, which lists the
+        # household's dashboards and is the surface that manages them.
         frontend.async_register_built_in_panel(
             hass,
             "lovelace",
             config={"mode": "storage"},
             frontend_url_path=url_path,
             require_admin=False,
-            sidebar_title=title,
-            sidebar_icon="mdi:account-circle",
+            sidebar_title=None,
+            sidebar_icon=None,
         )
 
 

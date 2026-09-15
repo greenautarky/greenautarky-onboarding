@@ -46,13 +46,14 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
+import voluptuous as vol
 from aiohttp import web
 from homeassistant.components import frontend, panel_custom
-from homeassistant.components.frontend import add_extra_js_url
+from homeassistant.components.frontend import EVENT_PANELS_UPDATED, add_extra_js_url
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
-from homeassistant.core import CoreState, Event, HomeAssistant
+from homeassistant.core import CoreState, Event, HomeAssistant, callback
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import instance_id
 from homeassistant.helpers.storage import Store
@@ -116,11 +117,36 @@ PANEL_URL_PATH = "greenautarky-setup-panel"
 
 # HA (2024.x+) quietly stops calling `async_setup` for a YAML-listed component
 # that doesn't declare a CONFIG_SCHEMA. ga_manager's converge enables this
-# integration by adding a bare `greenautarky_site:` key to
-# configuration.yaml, so we must accept the empty schema for that key to load
-# via YAML — otherwise the component would only ever come up via config_flow
-# (fragile on HA 2025.11.x). Same pattern as ga_frontend_bundle.
-CONFIG_SCHEMA = cv.empty_config_schema(DOMAIN)
+# integration by adding a BARE `greenautarky_site:` key to configuration.yaml,
+# so the schema must keep accepting that (value `None`) — otherwise the
+# component would only ever come up via config_flow (fragile on HA 2025.11.x).
+#
+# It used to be `cv.empty_config_schema(DOMAIN)`, which accepts the bare key and
+# logs an ERROR for anything under it ("the greenautarky_site integration does
+# not support any configuration parameters"). That was wrong twice over: the
+# sweep below had documented `hide_default_panels: false` as its way back since
+# the day it was written, so an operator who followed the comment got a config
+# error telling them the key does not exist AND a sweep that ran anyway.
+CONF_HIDE_DEFAULT_PANELS = "hide_default_panels"
+
+_SITE_OPTIONS_SCHEMA = vol.Schema(
+    {vol.Optional(CONF_HIDE_DEFAULT_PANELS, default=True): cv.boolean}
+)
+
+CONFIG_SCHEMA = vol.Schema(
+    # `vol.Any(None, …)` is the bare-key form; a typo inside the block is a
+    # hard Invalid rather than a silently ignored line.
+    {DOMAIN: vol.Any(None, _SITE_OPTIONS_SCHEMA)},
+    extra=vol.ALLOW_EXTRA,
+)
+
+# Where `async_setup` parks the validated YAML block for `_async_setup_common`.
+# Separate from `hass.data[DOMAIN]` (the runtime state), which the re-entry
+# guard keys on.
+DATA_YAML_CONFIG = f"{DOMAIN}_yaml_config"
+
+# Unsubscribe handle for the stock-panel invariant (see _hide_default_ha_panels).
+DATA_PANEL_SWEEP_UNSUB = f"{DOMAIN}_panel_sweep_unsub"
 
 # URL of the client-side `/` → wizard redirect JS module (Finding 20 fix).
 REDIRECT_JS_URL = "/greenautarky_site_redirect.js"
@@ -370,13 +396,22 @@ async def _async_setup_common(hass: HomeAssistant) -> bool:
     # the addons + settings only). The panels are still defined in HA Core
     # — they just don't appear in the sidebar (and the routes 404 from
     # the operator's perspective). Reversible without a redeploy: set
-    # `greenautarky_site: hide_default_panels: false` (or unset) in
-    # configuration.yaml + restart Core to bring them back.
+    # `greenautarky_site: hide_default_panels: false` in configuration.yaml
+    # + restart Core to bring them back. That key is READ here — see
+    # CONFIG_SCHEMA and DATA_YAML_CONFIG above.
     #
     # Why here, not via a Lovelace strategy: panel visibility is a
     # frontend-config concern that exists outside of dashboard rendering.
     # frontend.async_remove_panel is the canonical HA API.
-    _hide_default_ha_panels(hass)
+    yaml_config = hass.data.get(DATA_YAML_CONFIG) or {}
+    if yaml_config.get(CONF_HIDE_DEFAULT_PANELS, True):
+        _hide_default_ha_panels(hass)
+    else:
+        _LOGGER.info(
+            "greenautarky_site: %s is false — leaving Home Assistant's stock "
+            "sidebar panels alone",
+            CONF_HIDE_DEFAULT_PANELS,
+        )
 
     # Sidebar panel (mobile app), only shown while onboarding incomplete
     if not state.get("completed"):
@@ -459,7 +494,14 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
     Lets `greenautarky_site:` in configuration.yaml still work.
     Modern install path uses config_entry → async_setup_entry.
+
+    HA calls this for a config-entry integration too, before it sets the
+    entries up — so parking the YAML block here is what makes the options
+    readable from BOTH paths. A device with no `greenautarky_site:` key parks
+    ``{}`` and every option keeps its default.
     """
+    block = config.get(DOMAIN)
+    hass.data[DATA_YAML_CONFIG] = dict(block) if isinstance(block, dict) else {}
     return await _async_setup_common(hass)
 
 
@@ -482,6 +524,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     the integration is install-once / live-forever (customer onboarding
     state is permanent).
     """
+    _detach_panel_sweep(hass)
     hass.data.pop(DOMAIN, None)
     return True
 
@@ -560,8 +603,11 @@ def _scan_frontend_bundle() -> list[StaticPathConfig] | None:
 # Stock HA panels that the GA tenant flow does not surface in the sidebar.
 # Listed by panel name (= frontend route segment, i.e. what appears after
 # the slash). If HA Core renames one of these in a future release, the
-# matching call below silently no-ops (frontend.async_remove_panel doesn't
-# raise on unknown names) — the others continue to work.
+# renamed panel simply never matches — the others continue to work. A rename
+# is therefore SILENT; the thing that would catch it is the e2e assertion in
+# ha-operating-system (tests/e2e/tests/resident-sidebar.spec.ts), which asks
+# the running device what a resident's sidebar holds instead of asking this
+# list what it declares.
 #
 # The list is conservative — we keep:
 #   - "lovelace"          (Übersicht — primary GA dashboard)
@@ -588,39 +634,94 @@ GA_HIDDEN_DEFAULT_PANELS: tuple[str, ...] = (
 
 
 def _hide_default_ha_panels(hass: HomeAssistant) -> None:
-    """Remove HA's stock sidebar panels that don't fit the GA tenant flow.
+    """Keep HA's stock sidebar panels out of the GA tenant flow.
 
-    Idempotent: ``frontend.async_remove_panel`` is a no-op on a panel that
-    has already been removed (or was never registered for this HA build).
-    Catches per-panel exceptions so one missing entry can't block the others.
+    This is an INVARIANT, not a sweep with a schedule.
 
-    Run twice:
-      1. Immediately at setup — covers panels registered before us (most stock
-         ones do).
-      2. Again on ``EVENT_HOMEASSISTANT_STARTED`` — covers stock integrations
-         that register their panel later in startup (e.g. ``todo`` lands
-         alphabetically after ``greenautarky_site`` and is registered
-         in its own ``async_setup_entry``, so our early call would miss it).
+    History, because the shape of the bug is the whole point. The first
+    version removed the panels once, inside setup. ``todo`` survived, so a
+    second run was added on ``EVENT_HOMEASSISTANT_STARTED`` and the docstring
+    named ``todo`` as the reason. Measured on a canary on 2026-09-15, four of
+    the six were gone and ``map`` and ``todo`` — the two the second run had
+    been written for — were still in the resident's sidebar.
+
+    Neither startup ordering nor a Core rename explains that. Both panels are
+    registered by HOME ASSISTANT'S OWN ONBOARDING COMPLETION, which on a GA
+    device happens while the resident walks through OUR wizard, minutes to
+    hours after the last sweep:
+
+      * ``POST /api/onboarding/core_config`` creates a ``shopping_list``
+        config entry (Core's ``onboarding/views.py``, ``onboard_integrations``).
+        Setting it up forwards the ``todo`` platform, and ``todo.async_setup``
+        calls ``frontend.async_register_built_in_panel(hass, "todo", …)``.
+      * ``lovelace.async_setup`` registers ``create_map_dashboard`` as an
+        onboarding listener while the instance is not onboarded. Completing
+        onboarding fires it; the ``map`` dashboard lands in the dashboards
+        collection and its listener registers the ``map`` panel.
+
+    The four that DID disappear (``energy``, ``logbook``, ``history``,
+    ``media-browser``) arrive via ``default_config`` at boot — which is why the
+    first run caught them and the defect looked like "two panels are special".
+
+    So the defect class is a ONE-SHOT MUTATION of a registry other integrations
+    keep writing to. Any fixed number of runs loses the same race at the next
+    registration. What holds is subscribing to the registry's own change signal
+    — ``EVENT_PANELS_UPDATED``, which ``async_register_built_in_panel`` and
+    ``async_remove_panel`` both fire — and re-establishing the invariant
+    whenever the registry changes. That is edge-triggered on the exact mutation,
+    not a timer polling for one.
+
+    Two details that are load-bearing:
+
+    * The membership check before ``async_remove_panel`` is not an
+      optimisation. ``async_remove_panel`` logs ``Removing unknown panel <x>``
+      at WARNING for every name it does not find, so calling it unconditionally
+      on every registry change would print six warnings per panel registration
+      on a live device.
+    * Termination: removing a panel fires ``EVENT_PANELS_UPDATED`` again, which
+      re-enters this listener, which finds nothing left to remove and fires
+      nothing. Bounded at one extra pass; a registration we do not care about
+      removes nothing and so fires nothing at all.
     """
-    def _remove_all() -> None:
+
+    @callback
+    def _remove_present() -> int:
+        """Remove every listed panel that is currently registered."""
+        panels = hass.data.get(frontend.DATA_PANELS) or {}
+        removed = 0
         for panel in GA_HIDDEN_DEFAULT_PANELS:
+            if panel not in panels:
+                continue
             try:
                 frontend.async_remove_panel(hass, panel)
-                _LOGGER.debug("removed default HA panel: %s", panel)
             except Exception as e:
                 # Don't let a single rename/refactor in HA Core take down setup.
                 _LOGGER.warning("failed to remove panel %s: %s", panel, e)
+            else:
+                removed += 1
+                _LOGGER.debug("removed default HA panel: %s", panel)
+        return removed
 
-    _remove_all()
+    _remove_present()
 
-    # `todo` (and any future late-registered stock panel) lands after our
-    # async_setup completes. Listen once for HA-fully-started to sweep again.
-    from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
+    @callback
+    def _on_panels_updated(_event: Event) -> None:
+        _remove_present()
 
-    async def _on_started(_event) -> None:
-        _remove_all()
+    # Replaces any listener from a previous setup of this component so a
+    # reload cannot leave two of them attached.
+    _detach_panel_sweep(hass)
+    hass.data[DATA_PANEL_SWEEP_UNSUB] = hass.bus.async_listen(
+        EVENT_PANELS_UPDATED, _on_panels_updated
+    )
 
-    hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _on_started)
+
+@callback
+def _detach_panel_sweep(hass: HomeAssistant) -> None:
+    """Stop maintaining the stock-panel invariant (unload / re-setup)."""
+    unsub = hass.data.pop(DATA_PANEL_SWEEP_UNSUB, None)
+    if unsub is not None:
+        unsub()
 
 
 async def _async_register_panel(hass: HomeAssistant) -> None:
