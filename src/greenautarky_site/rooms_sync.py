@@ -472,16 +472,19 @@ class GARoomsSyncView(HomeAssistantView):
                                 "share a name in Home Assistant"
                             )
                         # An area this handler did not create, holding this
-                        # room's name. Said out loud with what was found,
-                        # because the same input used to raise: an area with no
-                        # ref alias, and — when an older build installed this
-                        # flat — already in the ref map under its own id.
+                        # room's name. Said out loud with what was actually
+                        # found, because the same input used to raise: no ref
+                        # this handler could match, and — when an older build
+                        # installed this flat — already in the ref map under
+                        # its own id. Stating the alias set rather than
+                        # asserting it is empty: adoption is also reached when
+                        # the area carries aliases that are simply not this ref.
                         _LOGGER.info(
-                            "rooms-sync: adopting area %s for ref %r — it holds the "
-                            "room's name, carries no ref alias, and %s. Recording "
-                            "the ref now so the next sync matches on it.",
-                            holder.id, ref,
-                            "an earlier sync already installed it"
+                            "rooms-sync: adopting area %s for ref %r — it holds "
+                            "this room's name, its aliases are %s, and it %s. "
+                            "Recording the ref now so the next sync matches on it.",
+                            holder.id, ref, sorted(holder.aliases) or "empty",
+                            "was already installed by an earlier sync"
                             if holder.id in installed else
                             "was created outside this handler (device placement)",
                         )
