@@ -564,6 +564,130 @@ async def test_an_adopted_room_survives_a_second_sync_unchanged(hass, config_ent
     assert dr.async_get(hass).async_get(device.id).area_id == "wohnzimmer"
 
 
+# ─── the re-sync that accused itself ────────────────────────────────────
+#
+# THE SHAPE THE FIELD ACTUALLY HAS, which none of the tests above had.
+#
+# `test_running_it_twice_changes_nothing` uses the pre-2.5.0 `type` field,
+# which means ref AND kind at once: the area is then created under an id
+# derived from the ref, so the second sync finds it by id and never reaches
+# the name guard. `test_an_adopted_room_survives_a_second_sync_unchanged`
+# starts from an EMPTY ref map, so its first sync adopts the area and writes
+# the ref alias — and its second sync matches on that alias.
+#
+# A flat installed under 2.3.x/2.4.x has neither property. `_find_area` matched
+# BY NAME back then (see the docstring that still explains why that went), so
+# the ref map was written under the areas' NAME-derived ids and no alias was
+# ever recorded — `_remember_ref` did not exist until 2.7.x. Upgrade that
+# device and every room is: not findable by ref, not findable by alias, held by
+# an area whose id is in the ref map. Which is precisely the guard's input.
+
+
+def _flat_installed_by_an_older_build(hass):
+    """A flat GACI installed before ref-only matching, as it is on disk.
+
+    Areas under name-derived ids carrying NO alias, and a ref map from the
+    earlier syncs keyed on those same ids. Measured on a canary on 2026-09-15.
+    """
+    state = _seed(hass, {"completed": True, STATE_KEY: {
+        "wohnzimmer": "Wohnzimmer",
+        "schlafzimmer": "Schlafzimmer",
+        "office": "Office",
+    }})
+    _seed_placement_areas(hass, "Wohnzimmer", "Schlafzimmer", "Office")
+    assert all(a.aliases == set() for a in ar.async_get(hass).async_list_areas()), \
+        "the whole point: the older build recorded no ref anywhere"
+    return state
+
+
+_OLDER_BUILD_PAYLOAD = {"rooms": [
+    {"name": "Wohnzimmer", "ref": "room_9211b00fd8ce43d19c47270595cea31f",
+     "kind": "living_room", "members": [IEEE_A]},
+    {"name": "Schlafzimmer", "ref": "room_53fa3183d89540b2813cc238c862a5eb",
+     "kind": "bedroom", "members": [IEEE_B]},
+    {"name": "Office", "ref": "room_7c1d9e2ab4f04f6b8e5a0c3d71286f45",
+     "kind": "office"},
+]}
+
+
+async def test_a_resync_of_an_installed_flat_does_not_collide_with_itself(
+    hass, config_entry
+):
+    """3 of 3 rooms FAILED on every re-sync, and two of four thermostats never
+    reached a room — the heating engine then has no valve to work with.
+
+    Each room was refused by the guard that asks whether the area holding its
+    name is `claimed`, because `claimed` was seeded from the ref map of EARLIER
+    syncs. So every room collided with the area it had installed itself, and
+    the error said "belongs to another room in this sync", which was not true
+    of any of them.
+    """
+    _flat_installed_by_an_older_build(hass)
+    dev_a = _add_zigbee_device(hass, IEEE_A)
+    dev_b = _add_zigbee_device(hass, IEEE_B)
+
+    resp = await _post(hass, _OLDER_BUILD_PAYLOAD)
+
+    body = _body(resp)
+    failed = [(r["name"], r["error"]) for r in body["rooms"] if r["ok"] is False]
+    assert not failed, f"a re-sync collided with its own rooms: {failed}"
+    assert resp.status == 200 and body["ok"] is True
+    assert [r["matched_on"] for r in body["rooms"]] == ["adopted_name"] * 3
+    assert len(ar.async_get(hass).async_list_areas()) == 3, "adopted, not duplicated"
+
+    # THE OUTCOME, not the status code: the valves are in their rooms.
+    registry = dr.async_get(hass)
+    assert registry.async_get(dev_a.id).area_id == "wohnzimmer"
+    assert registry.async_get(dev_b.id).area_id == "schlafzimmer"
+
+
+async def test_the_resync_heals_the_flat_rather_than_re_adopting_forever(hass):
+    """Adoption is not the steady state, it is the repair: it writes the ref
+    down as an alias, so the NEXT sync finds the room by ref like any other.
+
+    This is also why the old guard was self-perpetuating — it raised before
+    `_remember_ref` could run, so the very state that triggered it was never
+    repaired and every sync failed the same way again.
+    """
+    _flat_installed_by_an_older_build(hass)
+    await _post(hass, _OLDER_BUILD_PAYLOAD)
+
+    area = ar.async_get(hass).async_get_area("wohnzimmer")
+    assert "room_9211b00fd8ce43d19c47270595cea31f" in area.aliases
+
+    second = _body(await _post(hass, _OLDER_BUILD_PAYLOAD))
+
+    assert second["ok"] is True
+    assert [r["matched_on"] for r in second["rooms"]] == ["ref_alias"] * 3
+    assert len(ar.async_get(hass).async_list_areas()) == 3
+
+
+async def test_two_payload_rooms_under_one_name_are_named_for_what_they_are(hass):
+    """The guard still has a job — two rooms in ONE request asking for one name
+    is a real conflict, and HA cannot express it. What changes is that the
+    message now describes the state it found: which request, which room took
+    the name, and the fact that it is this one.
+
+    The message travels off the device, so it may carry only values GACI itself
+    sent: the room name it chose and the opaque ref of the room that took it.
+    An area_id stays in the log — for a resident-made room the id IS their room
+    name (see `test_a_failure_report_never_carries_a_resident_chosen_name`).
+    """
+    _seed(hass)
+
+    resp = await _post(hass, {"rooms": [
+        {"ref": "room_1a4", "name": "Wohnzimmer"},
+        {"ref": "room_1a9", "name": "Wohnzimmer"},
+    ]})
+
+    bad = _body(resp)["rooms"][1]
+    assert bad["ok"] is False
+    error = bad["error"]
+    assert "room_1a4" in error, "name the room that actually took the name"
+    assert "this request" in error.lower()
+    assert "another room in this sync" not in error, \
+        "the sentence that was false on every re-sync of an installed flat"
+
 async def test_the_recorded_ref_outlives_this_component_s_store(hass):
     """WHY AN ALIAS AND NOT A ROW IN THE STORE. Home Assistant will not change
     an area_id, so the ref has to be written down somewhere. The alias sits in
