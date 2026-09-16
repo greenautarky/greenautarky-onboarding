@@ -264,10 +264,78 @@ def _build_home_model(
         st = hass.states.get(entity_id)
         return st.attributes.get("device_class") if st else None
 
+    # ── what a resident operates, per device role (ADR-0014 Amendment 1) ────
+    #
+    # An ALLOW-list, not a filter. A room view used to offer every entity that
+    # was not explicitly marked as configuration or diagnostic, which is a race
+    # against firmware nobody here controls: measured on a bench flat
+    # 2026-09-16, a Sonoff TRV's `smart_temperature_control` arrived with
+    # `entity_category: None` — the vendor calls it a primary control — and
+    # appeared on the resident's screen in English, unexplained, one per valve.
+    # It is not cosmetic: it changes how the valve regulates.
+    #
+    # Its two siblings, `child_lock` and `open_window`, carry `config` and were
+    # filtered. That is the whole problem in one device: whether a resident sees
+    # a vendor knob depends on how the vendor labelled it.
+    #
+    # So: the device's ROLE decides, and each role names what it offers.
+    # Anything else the device exposes — including what the next firmware adds —
+    # is absent until a person puts it here, with our name and a reason.
+    _ROLE_CONTROLS: dict[str, frozenset[str]] = {
+        # A thermostat offers the thermostat. A valve's own knobs are not
+        # household controls, whatever the vendor labelled them.
+        "climate": frozenset({"climate"}),
+        "light": frozenset({"light"}),
+        # A plug is a switch and nothing else.
+        "switch": frozenset({"switch"}),
+    }
+
+    def _device_role(device_id: str | None) -> str | None:
+        """What kind of thing this device IS, from what it exposes.
+
+        Read from capability rather than from a model table: a table is wrong
+        on the day different hardware is sourced, and wrong silently.
+        """
+        if not device_id:
+            return None
+        domains = {
+            e.entity_id.split(".", 1)[0]
+            for e in ent_reg.entities.values()
+            if e.device_id == device_id
+        }
+        for role in ("climate", "light", "switch"):
+            if role in domains:
+                return role
+        return None
+
+    def _is_resident_control(entry: Any) -> bool:
+        """May this entity be OFFERED as a control?
+
+        An entity with no device is kept: a device is what firmware brings, and
+        a deviceless entity exists because a person configured it — a template
+        light, a helper. Refusing those would take away things somebody built on
+        purpose in order to keep out things nobody chose.
+        """
+        role = _device_role(entry.device_id)
+        if role is None:
+            return True
+        domain = entry.entity_id.split(".", 1)[0]
+        return domain in _ROLE_CONTROLS[role]
+
     def classify(entries: list[Any]) -> dict[str, list[str]]:
         # entity_category is None == resident-facing control; config/diagnostic are
         # knobs/telemetry the resident does not operate (matches the old strategy).
+        # `entity_category is None` means the INTEGRATION calls it a primary
+        # entity. That is what the sensor lists want: a valve's own temperature
+        # reading is not a control, and the room's history curves are built from
+        # it.
         primary = [e for e in entries if e.entity_category is None]
+
+        # The allow-list governs CONTROLS only. Applying it to the sensor lists
+        # as well would take a thermostat's temperature reading off the charts
+        # along with its vendor knobs — the room would lose its curves to fix a
+        # switch, which is a worse trade than the defect.
+        controls = [e for e in primary if _is_resident_control(e)]
 
         def dom(items: list[Any], d: str) -> list[str]:
             return [e.entity_id for e in items if e.entity_id.startswith(d + ".")]
@@ -294,9 +362,9 @@ def _build_home_model(
             return ours or all_climate
 
         return {
-            "climate": thermostats(primary),
-            "lights": dom(primary, "light"),
-            "switches": dom(primary, "switch"),
+            "climate": thermostats(controls),
+            "lights": dom(controls, "light"),
+            "switches": dom(controls, "switch"),
             "temps": sensors(primary, "temperature"),
             "hums": sensors(primary, "humidity"),
             "batts": sensors(entries, "battery"),  # battery is diagnostic → all entries
