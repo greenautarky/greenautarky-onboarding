@@ -259,6 +259,8 @@ class GAOnboardingTelemetryView(HomeAssistantView):
         hass: HomeAssistant = request.app["hass"]
         if err := _check_not_completed(hass):
             return err
+        if err := _check_pin_verified(hass):
+            return err
 
         state = _get_state(hass)
         store = _get_store(hass)
@@ -296,6 +298,8 @@ class GAOnboardingEthernetView(HomeAssistantView):
         """Save Ethernet preference and record consent."""
         hass: HomeAssistant = request.app["hass"]
         if err := _check_not_completed(hass):
+            return err
+        if err := _check_pin_verified(hass):
             return err
 
         state = _get_state(hass)
@@ -342,6 +346,15 @@ class GAOnboardingCompleteView(HomeAssistantView):
         """Complete the GA onboarding."""
         hass: HomeAssistant = request.app["hass"]
         if err := _check_not_completed(hass):
+            return err
+        # Behind the PIN like the account step, and for the same reason. Until
+        # 2.9.1 this step took an empty, unauthenticated POST and set
+        # ``completed: true`` — the wizard vanished from a device that had no
+        # resident account yet, and only an admin token could bring it back
+        # (measured on a bench device, 2026-09-16). Telemetry and Ethernet got
+        # the same gate: they record consents, and a consent nobody proved
+        # physical access for is not one.
+        if err := _check_pin_verified(hass):
             return err
 
         state = _get_state(hass)
