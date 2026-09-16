@@ -1,3 +1,22 @@
+## 2.8.0 — 2026-09-16
+
+### feat(rooms-sync): a device placed in a room gets a name a resident can read
+
+Every paired device kept the name zigbee2mqtt gave it — its IEEE address — so
+the resident's screen showed `0x0cae5ffff…` wherever a name belonged. The
+24-hour humidity chart was worse than ugly: three series from ONE sensor, all
+three labelled with the same address, so the legend carried no information.
+
+Placement is the one moment where the name can be derived: the room is known
+and the device's entities exist. The kind comes from what the device CAN DO — a
+climate entity makes a Thermostat, temperature + humidity a Klimasensor — never
+from a model table, which would be wrong the day different hardware is sourced
+and wrong silently.
+
+A name a human chose is never touched, a device with a real name from its
+integration keeps it, an undeterminable kind stays unnamed rather than guessed,
+and numbering is per room so two valves read "Thermostat 1" and "Thermostat 2".
+
 ## 2.7.5 — 2026-09-15
 
 ### fix(rooms-sync): a re-sync must not collide with the rooms it installed itself
