@@ -1,3 +1,21 @@
+## 2.9.1 — 2026-09-16
+
+### fix(wizard): telemetry, ethernet and complete stand behind the PIN too
+
+The wizard's PIN proves physical access, and the account and GDPR steps refused
+to run without it. Three other steps did not ask: `telemetry`, `ethernet` and
+`complete`. An unauthenticated, empty `POST /api/greenautarky_site/complete`
+answered 200, set `completed: true` and removed the wizard — on a device that
+had no resident account yet. From then on nobody could log in, and only an
+admin token could reset it.
+
+Found on a bench device on 2026-09-16 by a scripted onboarding that sent empty
+payloads by mistake: every gated step answered 403, `complete` answered 200.
+
+All three now call the same `_check_pin_verified` the account step does. A
+device without a PIN file keeps working as before. Tests: three red on 2.9.0,
+plus one proving the gate still opens and one for the no-PIN-file case.
+
 ## 2.9.0 — 2026-09-16
 
 ### feat(home-model): a room offers a chosen set of controls, not everything else
