@@ -132,6 +132,95 @@ def _ieee_index(hass: HomeAssistant) -> dict[str, str]:
     return out
 
 
+#: A device name that is nothing but its radio address. Home Assistant shows
+#: this wherever the device appears — chart legends, tiles, more-info — because
+#: zigbee2mqtt names a device after its IEEE address and nothing renames it.
+_RAW_NAME_RE = re.compile(r"^0x[0-9a-f]{12,16}$", re.I)
+
+#: What a device IS, derived from what it CAN DO rather than from its model.
+#:
+#: A model table would be wrong on the day a different valve is sourced, and
+#: wrong silently — the name would simply stay a radio address again. Reading
+#: the entity domains the device actually exposes keeps working across
+#: hardware, which is the whole point of naming from capability.
+_KIND_BY_CAPABILITY: tuple[tuple[str, frozenset[str]], ...] = (
+    ("Thermostat", frozenset({"climate"})),
+    ("Klimasensor", frozenset({"sensor.humidity"})),
+    ("Temperatursensor", frozenset({"sensor.temperature"})),
+)
+
+
+def _device_capabilities(hass: HomeAssistant, device_id: str) -> set[str]:
+    """The coarse capabilities of a device: entity domains, plus the two
+    sensor classes that tell a climate sensor from any other sensor."""
+    caps: set[str] = set()
+    for entry in er.async_entries_for_device(
+        er.async_get(hass), device_id, include_disabled_entities=True
+    ):
+        caps.add(entry.domain)
+        if entry.domain == "sensor":
+            klass = entry.original_device_class or entry.device_class
+            if klass in ("temperature", "humidity"):
+                caps.add(f"sensor.{klass}")
+    return caps
+
+
+def _kind_for(hass: HomeAssistant, device_id: str) -> str | None:
+    caps = _device_capabilities(hass, device_id)
+    for label, needed in _KIND_BY_CAPABILITY:
+        if needed <= caps:
+            return label
+    return None
+
+
+def _name_device_if_unnamed(
+    hass: HomeAssistant,
+    dev_reg: dr.DeviceRegistry,
+    device_id: str,
+    area_id: str,
+    taken: set[str],
+) -> str | None:
+    """Give a device a name a resident can read, once, when it has none.
+
+    Returns the name assigned, or None when nothing was changed.
+
+    THE RULE THAT MATTERS: a name a human chose is never touched. Only a device
+    still carrying its raw radio address is renamed, and `name_by_user` being
+    set at all is taken as "a human decided this" — including when they typed
+    something that looks like an address.
+
+    Numbering is per area, so a room with two valves reads "Thermostat 1" and
+    "Thermostat 2" rather than one name twice. The room itself is not repeated
+    in the name: the device is already IN the room, and a chart in that room
+    labelled "Thermostat Wohnzimmer (Wohnzimmer)" says the word twice.
+    """
+    device = dev_reg.async_get(device_id)
+    if device is None or device.name_by_user:
+        return None
+    if not _RAW_NAME_RE.match(str(device.name or "").strip()):
+        return None
+    kind = _kind_for(hass, device_id)
+    if kind is None:
+        return None
+
+    n = 1
+    while f"{kind} {n}" in taken:
+        n += 1
+    chosen = f"{kind} {n}"
+    dev_reg.async_update_device(device_id, name_by_user=chosen)
+    taken.add(chosen)
+    return chosen
+
+
+def _names_in_area(dev_reg: dr.DeviceRegistry, area_id: str) -> set[str]:
+    """Names already in use in this area, so numbering does not collide."""
+    return {
+        str(d.name_by_user or d.name or "").strip()
+        for d in dev_reg.devices.values()
+        if d.area_id == area_id
+    }
+
+
 def _find_area(registry: ar.AreaRegistry, ref: str | None):
     """Match an existing area BY REF ONLY. No name fallback.
 
@@ -541,6 +630,10 @@ class GARoomsSyncView(HomeAssistantView):
                 claimed_by[area.id] = ref
 
                 assigned, unknown = 0, []
+                # Names already in this room, so two valves do not both become
+                # "Thermostat 1".
+                taken = _names_in_area(dev_reg, area.id)
+                named = 0
                 for raw in members:
                     ieee = str(raw).strip().lower()
                     device_id = by_ieee.get(ieee)
@@ -553,6 +646,12 @@ class GARoomsSyncView(HomeAssistantView):
                         continue
                     dev_reg.async_update_device(device_id, area_id=area.id)
                     assigned += 1
+                    # Placement is the moment the name can be derived: the room
+                    # is known and the device's entities exist. Before it there
+                    # is nothing to derive from, and afterwards nobody looks
+                    # again — which is why every device kept its radio address.
+                    if _name_device_if_unnamed(hass, dev_reg, device_id, area.id, taken):
+                        named += 1
 
                 results.append({
                     "name": name,
