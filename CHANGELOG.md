@@ -1,3 +1,24 @@
+## 2.9.0 — 2026-09-16
+
+### feat(home-model): a room offers a chosen set of controls, not everything else
+
+The room view offered residents a switch labelled "Smart temperature control" —
+English, unexplained, one per thermostat, and not ours: a Sonoff TRV publishes
+it, zigbee2mqtt forwards it, Home Assistant makes a switch, and the room listed
+it because nothing said not to. It changes how the valve regulates.
+
+Its two siblings on the same device are the argument: `child_lock` and
+`open_window` carry `entity_category: config` and were filtered, while this one
+carries `None`. Whether a resident saw a vendor knob depended on how the vendor
+had labelled it — a race against firmware nobody here controls.
+
+The device's ROLE now decides and each role names what it offers (ADR-0014
+Amendment 1): climate → {climate}, light → {light}, switch → {switch}. The role
+is read from what the device exposes, never from a model table.
+
+The allow-list governs CONTROLS only: a valve's temperature reading is not a
+control and keeps feeding the room's history charts. An entity with no device is
+kept — firmware brings devices, a person brings helpers.
 ## 2.8.0 — 2026-09-16
 
 ### feat(rooms-sync): a device placed in a room gets a name a resident can read
