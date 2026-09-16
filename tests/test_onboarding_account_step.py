@@ -256,3 +256,113 @@ async def test_the_right_password_still_adopts(hass) -> None:
         "password — the dead end is back"
     )
     assert _count(hass, "Resident") == 1
+
+
+# ── the address as people write it ───────────────────────────────────────────
+#
+# Home Assistant's own auth provider normalises a username (strip + casefold)
+# and refuses a credential whose username is not already in that form —
+# `InvalidUsername: username_not_normalized`. The handler passed the value
+# through with `.strip()` only, which covers the whitespace half and not the
+# case half. So every address carrying a capital letter — the normal way a
+# person writes their own — ended the account step with "Could not create the
+# account credential" and no hint about what to change.
+#
+# Measured on a bench device on 2026-09-15: the identical step succeeded when
+# the same address was typed in lower case. Filed as #53.
+#
+# It passed every existing test in this file because every fixture address here
+# was already lower case.
+
+
+@pytest.mark.asyncio
+async def test_an_address_with_capitals_creates_the_account(hass) -> None:
+    """The red one. Before the fix this answered 400."""
+    await _install_hass_auth_provider(hass)
+    _seed(hass)
+
+    response = await _post(hass, "Thomas.Example@Example.Invalid", name="Thomas")
+
+    assert response.status == 200, (
+        "an address with capital letters must be accepted — it is how people "
+        "write their own e-mail"
+    )
+    assert _count(hass, "Thomas") == 1
+
+
+@pytest.mark.asyncio
+async def test_the_stored_username_is_normalised(hass) -> None:
+    """What is stored is the normalised form, so a later login matches."""
+    await _install_hass_auth_provider(hass)
+    _seed(hass)
+
+    await _post(hass, "  Thomas.Example@Example.Invalid  ", name="Thomas")
+
+    provider = hass.auth.auth_providers[0]
+    usernames = [
+        cred.data.get("username")
+        for user in await hass.auth.async_get_users()
+        for cred in user.credentials
+        if cred.auth_provider_type == provider.type
+    ]
+    assert "thomas.example@example.invalid" in usernames, usernames
+    assert not any(u != u.strip().casefold() for u in usernames if u), (
+        "nothing may be stored in a form Home Assistant would refuse"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_display_name_keeps_its_capitals(hass) -> None:
+    """Only the USERNAME is normalised. A person's name is not an identifier."""
+    await _install_hass_auth_provider(hass)
+    _seed(hass)
+
+    await _post(hass, "Thomas.Example@Example.Invalid", name="Thomas Taube")
+
+    names = [u.name for u in await hass.auth.async_get_users()]
+    assert "Thomas Taube" in names, names
+
+
+@pytest.mark.asyncio
+async def test_two_spellings_of_one_address_are_one_account(hass) -> None:
+    """MUST-PASS, not a guard — and the difference is worth writing down.
+
+    This assertion holds with the fix AND without it, verified by removing the
+    normalisation and watching it stay green. Home Assistant normalises on
+    LOOKUP (`async_get_or_create_credentials`), so a second attempt in another
+    capitalisation always found the existing credential and took the adoption
+    path. Only CREATION validates, which is why the defect lived in
+    `async_add_auth` alone and why the three tests above are the ones that go
+    red.
+
+    It is kept because it pins the half that already worked: a future change
+    that normalises "more thoroughly" somewhere else must not turn one address
+    into two accounts. A test that cannot fail is not evidence — so it is
+    labelled as what it is rather than counted as protection.
+    """
+    await _install_hass_auth_provider(hass)
+    _seed(hass)
+
+    first = await _post(hass, "thomas@example.invalid", name="Thomas")
+    second = await _post(hass, "THOMAS@example.invalid", name="Thomas")
+
+    assert first.status == 200
+    assert second.status == 200, "the same address, differently typed, is a retry"
+    assert _count(hass, "Thomas") == 1, "and a retry must not create a second user"
+
+    # The assertion that actually discriminates. Counting USERS does not: the
+    # handler removes the user it half-created, so the count stays at one
+    # whether the second attempt was understood as a retry or failed outright.
+    # What separates the two is how many CREDENTIALS exist and how they are
+    # spelled — without normalisation the second spelling becomes a second way
+    # into the same flat, or no way at all.
+    provider = hass.auth.auth_providers[0]
+    usernames = sorted(
+        cred.data.get("username")
+        for user in await hass.auth.async_get_users()
+        for cred in user.credentials
+        if cred.auth_provider_type == provider.type
+    )
+    assert usernames == ["thomas@example.invalid"], (
+        f"one address must be one credential, in one spelling — got {usernames}"
+    )

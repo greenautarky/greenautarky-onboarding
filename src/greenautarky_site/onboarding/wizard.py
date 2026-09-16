@@ -385,7 +385,20 @@ class GAOnboardingCreateUserView(HomeAssistantView):
         body = await request.json()
         client_id = body.get("client_id", "").strip()
         name = body.get("name", "").strip()
-        username = body.get("username", "").strip()
+        # Home Assistant's auth provider normalises a username with
+        # `username.strip().casefold()` and REFUSES a credential whose username
+        # is not already in that form (`InvalidUsername:
+        # username_not_normalized`). `.strip()` alone covers the whitespace half
+        # and not the case half, so every address carrying a capital letter —
+        # the normal way a person writes their own e-mail — ended this step with
+        # a generic "could not create the credential" and no hint about what to
+        # change (#53, measured on a bench device 2026-09-15).
+        #
+        # The same normalisation is applied HERE so that what we store, what the
+        # resident later types, and what the provider accepts are one spelling.
+        # Deliberately only the USERNAME: `name` is a person's name, not an
+        # identifier, and keeps its capitals.
+        username = body.get("username", "").strip().casefold()
         password = body.get("password", "")
         # This used to read `language` and drop it on the floor, so every
         # device kept running on HA's built-in "en" no matter what the wizard
