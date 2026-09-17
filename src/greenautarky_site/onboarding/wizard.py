@@ -10,6 +10,7 @@ Includes the admin bypass (``/admin``) and the QA reset endpoint.
 from __future__ import annotations
 
 import base64
+import importlib
 import json
 import logging
 import subprocess
@@ -247,6 +248,23 @@ class GALedConfigView(HomeAssistantView):
         return self.json({"status": "ok", "led_disabled": state["led_disabled"]})
 
 
+def _telemetry_set_preferences():
+    """The telemetry component's consent entry point, or None if it is older.
+
+    Resolved at call time, not import time: the two components load in no fixed
+    order, and on a device the module lives under ``custom_components``.
+    """
+    for name in ("custom_components.greenautarky_telemetry", "greenautarky_telemetry"):
+        try:
+            module = importlib.import_module(name)
+        except ImportError:
+            continue
+        setter = getattr(module, "async_set_preferences", None)
+        if setter is not None:
+            return setter
+    return None
+
+
 class GAOnboardingTelemetryView(HomeAssistantView):
     """Handle telemetry preferences."""
 
@@ -267,14 +285,34 @@ class GAOnboardingTelemetryView(HomeAssistantView):
 
         body = await request.json()
 
-        # Forward to greenautarky_telemetry integration
+        # Forward to greenautarky_telemetry — as a DECISION, through its entry
+        # point. This used to write `error_logs` / `metrics` as flat keys into
+        # the component's preferences dict and save that. A v2 record keeps
+        # the truth in `tiers.<tier>.value`, which the flat write never
+        # touched, and the OS gate reads the tiers: a resident who said yes to
+        # Tier 2 was stored as `tier2: false` (bench device, 2026-09-16; Tier 1
+        # looked right only because its default is True).
         telemetry_data = hass.data.get("greenautarky_telemetry")
         if telemetry_data:
-            prefs = telemetry_data["preferences"]
-            prefs["error_logs"] = bool(body.get("error_logs", False))
-            prefs["metrics"] = bool(body.get("metrics", False))
-            telemetry_store: Store = telemetry_data["store"]
-            await telemetry_store.async_save(prefs)
+            error_logs = bool(body.get("error_logs", False))
+            metrics = bool(body.get("metrics", False))
+            setter = _telemetry_set_preferences()
+            if setter is not None:
+                await setter(hass, error_logs=error_logs, metrics=metrics)
+            else:
+                # Older telemetry component (< 0.2.4). Keep the legacy write so
+                # the wizard finishes — and say what it cannot record. A silent
+                # fallback here is the same defect under another name.
+                _LOGGER.warning(
+                    "telemetry step: greenautarky_telemetry has no "
+                    "async_set_preferences (component older than 0.2.4) — writing "
+                    "the legacy flat keys only; the tier record stays at its defaults"
+                )
+                prefs = telemetry_data["preferences"]
+                prefs["error_logs"] = error_logs
+                prefs["metrics"] = metrics
+                telemetry_store: Store = telemetry_data["store"]
+                await telemetry_store.async_save(prefs)
 
         if "telemetry" not in state["steps_done"]:
             state["steps_done"].append("telemetry")

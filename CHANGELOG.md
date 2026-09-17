@@ -1,3 +1,19 @@
+## 2.9.2 — 2026-09-17
+
+### fix(wizard): the telemetry step records a consent, not two flat booleans
+
+The step wrote `error_logs` / `metrics` as flat keys into
+`greenautarky_telemetry`'s preferences dict and saved that. The v2 record's
+truth is `tiers.<tier>.value`, which the flat write never touched, and the OS
+gate (`ga-telemetry-gate`) reads the tiers. Measured on a bench device on
+2026-09-16: the resident said yes to Tier 2, the store said `tier2: false`
+next to `metrics: true`. Tier 1 looked right only because its default is `True`.
+
+The step now calls `greenautarky_telemetry.async_set_preferences` (0.2.4). On
+a device with an older telemetry component it keeps the flat write and logs a
+WARNING saying the tier record is partial — a silent fallback is the same
+defect under another name. Tests: three, two red on 2.9.1.
+
 ## 2.9.1 — 2026-09-16
 
 ### fix(wizard): telemetry, ethernet and complete stand behind the PIN too
