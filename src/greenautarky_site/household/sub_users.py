@@ -23,11 +23,9 @@ from homeassistant.auth.const import GROUP_ID_USER
 from homeassistant.auth.providers.homeassistant import InvalidUser
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
-
-from .. import dashboards
 from homeassistant.helpers.network import NoURLAvailableError, get_url
 
-from ..redirects import redirect_keeping_query
+from .. import dashboards
 from ..const import (
     DATENSCHUTZ_URL,
     INVITE_PIN_ALPHABET,
@@ -38,6 +36,7 @@ from ..const import (
     SUB_USER_JOIN_MAX_DELAY,
     SUB_USER_MIN_PASSWORD_LEN,
 )
+from ..redirects import redirect_keeping_query
 from ..store import _async_get_hass_provider, _get_state, _get_store
 from .dashboards_admin import (
     _available_dashboards,

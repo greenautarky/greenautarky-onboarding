@@ -17,8 +17,6 @@ import subprocess
 from datetime import UTC, datetime
 from urllib.parse import urlencode
 
-from ..redirects import redirect_keeping_query
-
 from aiohttp import web
 from homeassistant.auth.const import GROUP_ID_USER
 from homeassistant.auth.providers.homeassistant import InvalidAuth, InvalidUser
@@ -33,6 +31,7 @@ from ..const import SITE_DEFAULT_LANGUAGE
 from ..household.dashboards_admin import _reconcile_dashboard_visibility
 from ..household.masters import _read_master_user_ids, _write_master_users
 from ..household.sub_users import _async_create_linked_person
+from ..redirects import redirect_keeping_query
 from ..store import _async_get_hass_provider, _get_state, _get_store
 from .pin import _check_pin_verified, _pin_required
 
