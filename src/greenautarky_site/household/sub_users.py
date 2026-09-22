@@ -25,6 +25,9 @@ from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
 
 from .. import dashboards
+from homeassistant.helpers.network import NoURLAvailableError, get_url
+
+from ..redirects import redirect_keeping_query
 from ..const import (
     DATENSCHUTZ_URL,
     INVITE_PIN_ALPHABET,
@@ -227,9 +230,35 @@ class GASubUserInviteView(HomeAssistantView):
         await store.async_save(state)
 
         _LOGGER.info("sub-user invite issued by master %s (ttl %dh)", user.id, ttl_h)
-        return self.json(
-            {"pin": pin, "expires_at": exp.isoformat(), "ttl_hours": ttl_h}
-        )
+        # A link, not six digits. The join page carries the query through since
+        # 2.9.4, and the wizard has always read ?pin= — so the master can send
+        # this straight to the person joining. The PIN stays in the answer: a
+        # link is useless when it has to be read out over the phone.
+        #
+        # The base is Home Assistant's own external URL, which on a GA device is
+        # the resident URL. If HA knows none, there is no honest link to build,
+        # so the field is ABSENT rather than a guess at an address the recipient
+        # cannot reach — and the absence is announced at WARNING, not INFO.
+        invite_url: str | None = None
+        try:
+            base = get_url(hass, prefer_external=True, allow_internal=False)
+        except NoURLAvailableError:
+            _LOGGER.warning(
+                "sub-user invite: Home Assistant knows no external URL, so this "
+                "invite is PIN-only — set one, or the master has to dictate six "
+                "digits over the phone"
+            )
+        else:
+            invite_url = f"{base.rstrip('/')}/greenautarky-join?pin={pin}"
+
+        answer: dict[str, Any] = {
+            "pin": pin,
+            "expires_at": exp.isoformat(),
+            "ttl_hours": ttl_h,
+        }
+        if invite_url:
+            answer["invite_url"] = invite_url
+        return self.json(answer)
 
 
 class GASubUserJoinPageView(HomeAssistantView):
@@ -247,7 +276,10 @@ class GASubUserJoinPageView(HomeAssistantView):
 
     async def get(self, request: web.Request) -> web.Response:
         """Redirect to the wizard in join mode."""
-        raise web.HTTPFound("/greenautarky-setup.html?join=1")
+        # ?join=1 is ours and wins; everything the invite LINK carries —
+        # ?pin= above all — rides along. The frontend has read it since it was
+        # written; only this line stood between a link and six typed digits.
+        raise redirect_keeping_query(request, "/greenautarky-setup.html?join=1")
 
 
 class GASubUserJoinView(HomeAssistantView):
