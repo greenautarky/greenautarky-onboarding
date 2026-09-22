@@ -91,6 +91,9 @@ async def test_complete_still_works_once_the_pin_is_verified(hass, monkeypatch):
 
     hass.data.setdefault(DATA_PANELS, {})
     st = _seed(hass, pin_verified=True)
+    # The account step is not the subject of this file; record it so the order
+    # guard (2.9.3) does not mask the PIN gate under test.
+    st["steps_done"].append("account")
 
     resp = await GAOnboardingCompleteView().post(_FakeRequest(hass, {}))
 
@@ -107,6 +110,9 @@ async def test_no_pin_file_means_no_gate(hass, monkeypatch):
 
     hass.data.setdefault(DATA_PANELS, {})
     st = _seed(hass, pin_verified=False)
+    # Same note as above: the account step is recorded so the order guard does
+    # not stand in for the PIN gate this file is about.
+    st["steps_done"].append("account")
 
     resp = await GAOnboardingCompleteView().post(_FakeRequest(hass, {}))
 

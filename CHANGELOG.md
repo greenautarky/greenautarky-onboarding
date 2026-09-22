@@ -1,3 +1,18 @@
+## 2.9.3
+
+- **`complete` refuses while no resident account exists.** It is a one-way
+  door: it sets `completed: true`, after which every other wizard step —
+  `create_user` above all — is refused, so a flow that reaches it without an
+  account leaves a device that counts as onboarded and has nobody who can log
+  in. Measured 2026-09-22 on a bench device: `create_user` was rejected for a
+  missing `client_id`, the flow carried on, `complete` accepted the PIN, and
+  the device ended with one admin (created by converge) and no resident; the
+  only ways back were an admin token or a reflash. The 2.9.1 PIN gate cannot
+  catch this — the caller had the PIN. What was missing is ORDER.
+  The guard reads the recorded `account` step, not a user count: every device
+  carries the converge-created admin, so counting would pass on exactly the
+  broken device.
+
 ## 2.9.2 — 2026-09-17
 
 ### fix(wizard): the telemetry step records a consent, not two flat booleans
