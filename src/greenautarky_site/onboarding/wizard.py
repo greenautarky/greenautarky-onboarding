@@ -56,6 +56,40 @@ async def _async_user_for_username(hass: HomeAssistant, provider, username: str)
         return None
     return await hass.auth.async_get_user_by_credentials(creds)
 
+def _check_account_exists(hass: HomeAssistant) -> web.Response | None:
+    """Return a 409 if no resident account has been created yet.
+
+    ``complete`` is a one-way door: it sets ``completed: true``, and every
+    other wizard step is then refused by :func:`_check_not_completed` — most
+    importantly ``create_user``. So a flow that reaches ``complete`` without an
+    account leaves a device that counts as onboarded and has nobody who can log
+    in, and the only ways back are an admin token or a reflash.
+
+    That is not hypothetical: on 2026-09-22 a ``create_user`` call was rejected
+    for a missing ``client_id``, the flow carried on to ``complete``, and the
+    device ended the wizard with one admin (created by converge) and no
+    resident. The PIN gate added in 2.9.1 does not catch this — the caller had
+    the PIN. The missing guard is ORDER, not authentication.
+
+    The subject is the STATE the account step records, not a user count: a
+    device always has the converge-created admin, so counting users would pass
+    on exactly the broken device.
+    """
+    state = _get_state(hass)
+    if "account" not in state.get("steps_done", []):
+        return web.json_response(
+            {
+                "message": (
+                    "No resident account on this device yet — complete the "
+                    "account step first. Finishing here would close the wizard "
+                    "with nobody able to log in."
+                )
+            },
+            status=409,
+        )
+    return None
+
+
 def _check_not_completed(hass: HomeAssistant) -> web.Response | None:
     """Return a 403 response if onboarding is already completed."""
     state = _get_state(hass)
@@ -393,6 +427,10 @@ class GAOnboardingCompleteView(HomeAssistantView):
         # the same gate: they record consents, and a consent nobody proved
         # physical access for is not one.
         if err := _check_pin_verified(hass):
+            return err
+        # The PIN says someone stood at the device. It does not say the wizard
+        # was walked. See _check_account_exists.
+        if err := _check_account_exists(hass):
             return err
 
         state = _get_state(hass)
