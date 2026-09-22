@@ -17,6 +17,8 @@ import subprocess
 from datetime import UTC, datetime
 from urllib.parse import urlencode
 
+from ..redirects import redirect_keeping_query
+
 from aiohttp import web
 from homeassistant.auth.const import GROUP_ID_USER
 from homeassistant.auth.providers.homeassistant import InvalidAuth, InvalidUser
@@ -115,9 +117,12 @@ class GAOnboardingPageView(HomeAssistantView):
         """Redirect to the built frontend page."""
         hass: HomeAssistant = request.app["hass"]
         state = _get_state(hass)
+        # Both targets keep the caller's query: the device label's QR code
+        # carries ?pin=&device=, and this route is one of the two the sweep of
+        # 2026-09-22 found still dropping it (see redirects.py).
         if state.get("completed"):
-            raise web.HTTPFound("/")
-        raise web.HTTPFound("/greenautarky-setup.html")
+            raise redirect_keeping_query(request, "/")
+        raise redirect_keeping_query(request, "/greenautarky-setup.html")
 
 
 class GAAdminBypassView(HomeAssistantView):

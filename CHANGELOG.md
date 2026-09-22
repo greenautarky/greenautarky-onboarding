@@ -1,3 +1,20 @@
+## 2.9.4
+
+- **A sub-user invite is a link now.** `POST …/sub_user/invite` returns
+  `invite_url` next to the PIN — `…/greenautarky-join?pin=…` — built from Home
+  Assistant's external URL, which on a GA device is the resident URL. If HA
+  knows no external URL the field is absent and the reason is logged at
+  WARNING; a guessed address the recipient cannot reach is worse than six
+  digits. The PIN stays in the answer, because a link is useless when it has to
+  be read out over the phone.
+- **Redirects keep what the caller sent.** This shipped once as the `/` → wizard
+  redirect dropping the QR code's `?pin=&device=` (fixed in 2.7.1 — for that
+  route). A sweep found the same shape twice more, untouched: `/greenautarky-join`
+  and `/greenautarky-setup`. The join one is what stood between an invite LINK
+  and six typed digits: the frontend has read `?pin=` from the URL since it was
+  written. All three now go through one `redirect_keeping_query`, the route's own
+  parameters win over the caller's, and a gate fails the build when a redirect is
+  built without it — because a fix applied per site is a fix that comes back.
 ## 2.9.3
 
 - **`complete` refuses while no resident account exists.** It is a one-way
