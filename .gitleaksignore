@@ -1,0 +1,35 @@
+# Findings that are known-dead, one fingerprint per line.
+#
+# WHY THIS FILE AND NOT .gitleaks.toml's [allowlist]: gitleaks 8.30.1 accepts
+# `commits`, `paths`, `regexes`, `regexTarget` and `stopwords` in an allowlist —
+# there is no `fingerprints` key. A `fingerprints = [...]` entry parses as TOML,
+# is silently ignored, and the finding stays. Measured against origin/main's
+# history on 2026-09-23 before this file existed: with the fingerprint in the
+# allowlist the scan still reported it.
+#
+# Rule from .gitleaks.toml's header, unchanged: pin the exact fingerprint, never
+# a bare path or rule, and say what the value was.
+#
+# ── 1 ────────────────────────────────────────────────────────────────────────
+# A test placeholder, NOT a revoked credential — calling it "revoked" would be a
+# lie, so rule 1 of the header is answered rather than waved past:
+#
+#   WHAT IT IS: the joke placeholder `hunter2` with a suffix, in the test that
+#   drives the onboarding account step. It never addressed any system, and the
+#   same test asserts that this exact value is what a WRONG password looks like.
+#   Verifiable in one line:
+#       git show 2d70f5e1:tests/test_onboarding_account_step.py
+#   Today's HEAD does not hold it literal any more — the value comes from a
+#   fixture variable.
+#
+#   WHEN: flagged as `generic-api-key` on entropy in the commit that fixed the
+#   account-step dead end (#37, 2026-09-14). Found 2026-09-23 while cutting the
+#   2.9.4 release.
+#
+#   WHY IT WAS WORTH STOPPING A RELEASE FOR: the scan sweeps FULL history on a
+#   push and only the PR range on a pull request. Every push run on `main` has
+#   been red and every PR run green, on identical content, since 2026-09-14. A
+#   gate that is red 100% of the time on the branch that ships is not a gate —
+#   nobody can tell this finding from a real one. That is exactly the failure
+#   .gitleaks.toml's own header warns about, and it had already happened here.
+2d70f5e1dd0bed4918e6f887dff93299665f3ed6:tests/test_onboarding_account_step.py:generic-api-key:131
