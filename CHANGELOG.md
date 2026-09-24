@@ -1,3 +1,17 @@
+## 2.9.5
+
+- **The account step survives a dropped request.** A create_user request cut
+  off between the credential and the user link — a browser closed, a phone
+  locked, a Wi-Fi hop — left a credential nobody owned, and every later attempt
+  with that address answered 400. A resident whose first attempt was cut off
+  could never finish onboarding with their own address. The step now finishes
+  such an account after checking the password (a wrong one stays a 401), reuses
+  the user the dropped attempt made (never the owner), and creates user,
+  credential and link under `asyncio.shield` so a disconnect cannot split them.
+  The existence check it relied on called a method Home Assistant's provider
+  does not have and read the error as "exists"; it now reads the provider's
+  user list (#64).
+
 ## 2.9.4
 
 - **A sub-user invite is a link now.** `POST …/sub_user/invite` returns
