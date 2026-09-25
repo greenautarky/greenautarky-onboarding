@@ -58,6 +58,15 @@ jobs:
       - name: Verify frontend bundle content-hash and agreement with the component
         run: scripts/build_bundle.sh --check
 
+      # The .gz siblings are generated, not committed: prove the producer
+      # writes a matching one for every served asset (zero assets = fail).
+      # The pytest job additionally checks the packaged tarball and the HA
+      # route's Content-Encoding.
+      - name: Generate and verify the precompressed siblings
+        run: |
+          scripts/build_bundle.sh --compress
+          scripts/build_bundle.sh --check-compressed
+
       # The gate must be able to go both red and green, and a mutation must
       # turn the SPECIFIC case red. Proven on every PR so the gate cannot rot
       # into decoration between the day it is written and the day it is needed.

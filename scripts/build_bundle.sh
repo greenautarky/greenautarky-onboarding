@@ -15,6 +15,11 @@
 #                                     # committed bytes must match SHA256SUMS.
 #   scripts/build_bundle.sh --hash    # recompute SHA256SUMS from the committed
 #                                     # bytes (run after a manual re-vendor).
+#   scripts/build_bundle.sh --compress  # write the .gz sibling of every served
+#                                     # .js/.css/.html (NOT committed — run by
+#                                     # scripts/package_release.sh and by tests).
+#   scripts/build_bundle.sh --check-compressed  # --check + every served asset
+#                                     # MUST have a matching .gz (CI, release).
 #   scripts/build_bundle.sh --regen   # OPTIONAL regen: rebuild from the
 #                                     # frontend source in frontend.lock.yaml,
 #                                     # re-vendor into frontend_bundle/, re-hash.
@@ -26,7 +31,10 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BUNDLE="${REPO_ROOT}/src/greenautarky_site/frontend_bundle"
+# GA_BUNDLE_DIR lets scripts/package_release.sh run the same checks on the
+# staged copy that is actually tarred. The component constants the gate
+# compares against are still read from REPO_ROOT/src (the same bytes).
+BUNDLE="${GA_BUNDLE_DIR:-${REPO_ROOT}/src/greenautarky_site/frontend_bundle}"
 SUMS="${BUNDLE}/SHA256SUMS"
 INFO="${BUNDLE}/BUILD-INFO.txt"
 LOCK="${REPO_ROOT}/frontend.lock.yaml"
@@ -37,7 +45,9 @@ is_meta() { case "$1" in ./SHA256SUMS|./BUILD-INFO.txt) return 0;; *) return 1;;
 hash_bundle() {
   # Deterministic, sorted list of payload files, relative to BUNDLE.
   ( cd "${BUNDLE}"
-    find . -type f | LC_ALL=C sort | while read -r f; do
+    # .gz siblings are generated at packaging time, never committed, so they
+    # are not part of the committed-bytes manifest.
+    find . -type f ! -name '*.gz' | LC_ALL=C sort | while read -r f; do
       is_meta "$f" && continue
       sha256sum "$f"
     done
@@ -166,6 +176,67 @@ verify_bundle_agrees_with_component() {
   return "${rc}"
 }
 
+# --- precompressed siblings ---------------------------------------------------
+#
+# WHY: Home Assistant serves our static paths through aiohttp's FileResponse,
+# which never compresses on the fly. It serves <file>.br / <file>.gz when such a
+# sibling exists and the client accepts it, and the raw file otherwise. Stock HA
+# frontend ships those siblings; this bundle did not, so the wizard's 735,608-byte
+# entry bundle went over the wire uncompressed (measured 2026-09-25) — on the
+# weak Wi-Fi a resident first onboards over.
+#
+# The siblings are NOT committed (.gitignore): scripts/package_release.sh
+# generates them on the staged tree it tars, then runs --check-compressed on
+# that same tree.
+#
+# INVARIANT: every served .js/.css/.html has a .gz sibling generated from its
+# own bytes in the same step, and no .gz exists without its source. A stale .gz
+# is worse than none: aiohttp prefers it, so browsers would run OLD code while
+# the raw file on disk looks right. `gzip -n` omits name and mtime, so the same
+# input gives the same bytes on every run.
+served_assets() {
+  find "${BUNDLE}" -type f \( -name '*.js' -o -name '*.css' -o -name '*.html' \) | LC_ALL=C sort
+}
+
+compress_bundle() {
+  find "${BUNDLE}" -type f -name '*.gz' -delete
+  local f n=0
+  while IFS= read -r f; do
+    [ -n "${f}" ] || continue
+    gzip -9 -n -c "${f}" > "${f}.gz"
+    n=$((n+1))
+  done <<< "$(served_assets)"
+  [ "${n}" -gt 0 ] || { echo "::error::no served assets under ${BUNDLE} — nothing compressed" >&2; return 1; }
+  echo "Wrote ${n} .gz siblings"
+}
+
+# $1 = require (every asset MUST have a .gz) | present (verify only the .gz
+# that exist — a developer tree without any is fine, a stale one is not).
+verify_precompressed_siblings() {
+  local mode="$1" f gz n=0 have=0 rc=0
+  while IFS= read -r f; do
+    [ -n "${f}" ] || continue
+    n=$((n+1)); gz="${f}.gz"
+    if [ ! -f "${gz}" ]; then
+      if [ "${mode}" = "require" ]; then
+        echo "::error::${f#"${BUNDLE}"/} has no .gz sibling — it would be served uncompressed" >&2; rc=1
+      fi
+      continue
+    fi
+    have=$((have+1))
+    if [ "$(gzip -dc "${gz}" 2>/dev/null | sha256sum | cut -d' ' -f1)" != "$(sha256sum < "${f}" | cut -d' ' -f1)" ]; then
+      echo "::error::${gz#"${BUNDLE}"/} does not decompress to its source — browsers would get a different version (run --compress)" >&2; rc=1
+    fi
+  done <<< "$(served_assets)"
+  [ "${n}" -gt 0 ] || { echo "::error::no served assets under ${BUNDLE} — nothing was inspected" >&2; return 1; }
+  while IFS= read -r gz; do
+    [ -n "${gz}" ] || continue
+    [ -f "${gz%.gz}" ] || { echo "::error::${gz#"${BUNDLE}"/} is an orphan — its source is gone but it would still be served" >&2; rc=1; }
+  done <<< "$(find "${BUNDLE}" -type f -name '*.gz' | LC_ALL=C sort)"
+  [ "${rc}" -eq 0 ] && echo "frontend_bundle precompression (${mode}) — ${n} served assets, ${have} with a .gz of the same bytes"
+  return "${rc}"
+}
+
 MODE="${1:---check}"
 case "${MODE}" in
   --hash)
@@ -186,6 +257,17 @@ case "${MODE}" in
     echo "frontend_bundle OK — $(grep -c . "${SUMS}") files match SHA256SUMS"
     # Unchanged bytes and an intact file set are not the same as CORRECT bytes.
     verify_bundle_agrees_with_component || exit 1
+    # Leftover local .gz must still be the same bytes; none at all is fine here.
+    verify_precompressed_siblings present || exit 1
+    ;;
+
+  --check-compressed)
+    "$0" --check || exit 1
+    verify_precompressed_siblings require || exit 1
+    ;;
+
+  --compress)
+    compress_bundle
     ;;
 
   --regen)
@@ -255,5 +337,5 @@ case "${MODE}" in
     ;;
 
   *)
-    echo "usage: $0 [--check|--hash|--regen]" >&2; exit 2;;
+    echo "usage: $0 [--check|--check-compressed|--hash|--compress|--regen]" >&2; exit 2;;
 esac
