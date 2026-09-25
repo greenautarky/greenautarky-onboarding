@@ -29,3 +29,7 @@ secrets/
 *.key
 console-login-secret*
 onboarding-pin*
+
+# Wizard bundle .gz siblings are generated at packaging time
+# (scripts/package_release.sh), never committed — see BUILD.md.
+src/greenautarky_site/frontend_bundle/**/*.gz

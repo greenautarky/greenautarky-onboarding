@@ -49,12 +49,13 @@ jobs:
         run: scripts/build_bundle.sh --check
 
       - name: Package the placement artifact
+        # package_release.sh stages the component, generates the wizard's .gz
+        # siblings (gzip -9 -n, not committed), runs --check-compressed on the
+        # staged tree and tars exactly that tree. A failing check fails the
+        # release. tests/test_release_package.py runs the same script on every PR.
         run: |
           V="${{ steps.ver.outputs.version }}"
-          # Tarball root is the component dir, so a consumer extracts straight
-          # into /config/custom_components/ (tar xzf - -C .../custom_components).
-          tar czf "greenautarky-site-${V}.tar.gz" \
-            -C src greenautarky_site
+          scripts/package_release.sh "${V}" .
           sha256sum "greenautarky-site-${V}.tar.gz" > SHA256SUMS
           echo "--- SHA256SUMS ---"; cat SHA256SUMS
 
