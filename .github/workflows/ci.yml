@@ -29,6 +29,27 @@ jobs:
       - name: Pytest
         run: pytest tests/ -v --cov=src/greenautarky_site --cov-report=term
 
+  browser:
+    # Client-side code proven in a real browser against a local fake page —
+    # no device, no network (Playwright answers every request itself). Today:
+    # the login page's "Forgot password?" retarget script (ADR-0040), which the
+    # unit tier can only see as a string. GA_REQUIRE_BROWSER=1 turns a missing
+    # Playwright into a FAILURE, not a skip.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Install
+        run: |
+          pip install -e .[dev] playwright
+          playwright install chromium --with-deps
+      - name: Browser tier
+        env:
+          GA_REQUIRE_BROWSER: "1"
+        run: pytest tests/browser -m browser -v -o addopts=""
+
   build-consistency:
     # Sanity: the integration's `manifest.json` version must match
     # `pyproject.toml` version. Bumping one without the other has bitten

@@ -1,5 +1,22 @@
 ## Unreleased
 
+- **"Forgot password?" on the login page leads to our PIN reset.** Home
+  Assistant's login page linked it to home-assistant.io — container command
+  lines, written for whoever runs the server. A resident who forgot the
+  password landed there, while the component has shipped a PIN reset
+  (`/greenautarky-password-reset`: sticker PIN → pick the household user → new
+  password; admin accounts excluded) that nothing linked to. `/auth/authorize`
+  is now served with a small script that points the link there and opens it in
+  the same tab; only on devices with an onboarding PIN, since the reset needs
+  one. If Core ever serves the page differently, the stock link stays and the
+  log says so at WARNING (ADR-0040).
+- **The reset endpoints are tested.** They had no test at all: PIN required,
+  a wrong PIN counts and arms the backoff, the master is listed and resettable
+  (the new password logs in, the old one does not), an admin is neither. New
+  `browser` tier + CI job runs the link script in Chromium against a local fake
+  page; a device test resets a disposable sub-user on a canary and an e2e test
+  follows the real login page's link.
+
 - **A release now opens its own OS pin PR.** New workflow `pin-os.yml` runs
   after a successful Release (tag push) and opens a PR on
   ha-operating-system moving `greenautarky-site` in `version.yaml` to the new
