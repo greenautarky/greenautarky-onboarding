@@ -1,0 +1,62 @@
+name: Pin in OS
+
+# After a successful Release, open the bake-pin PR on ha-operating-system
+# (version.yaml -> greenautarky-site). Separate from release.yml on purpose:
+# re-running this must never re-publish the GHCR artifact.
+#
+# Requires repo secret DOWNSTREAM_SYNC_PAT (same token as ga_manager's
+# sync-downstream job): contents:write + pull-requests:write on
+# greenautarky/ha-operating-system. Without it the run FAILS — a published
+# release that nothing pins reaches no device, and a green run would hide that.
+
+on:
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Released version to pin (e.g. 2.9.6)"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  pin:
+    runs-on: ubuntu-latest
+    # Only after a Release that succeeded, and only for a tag push (a manual
+    # Release dispatch is a republish, not a new version).
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       startsWith(github.event.workflow_run.head_branch, 'v'))
+    steps:
+      - name: Resolve version
+        id: ver
+        env:
+          INPUT: ${{ github.event.inputs.version }}
+          TAG: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          v="${INPUT:-${TAG#v}}"
+          test -n "$v" || { echo "::error::no version resolved"; exit 1; }
+          echo "value=$v" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: v${{ steps.ver.outputs.value }}
+
+      - name: Guard on DOWNSTREAM_SYNC_PAT
+        env:
+          PAT: ${{ secrets.DOWNSTREAM_SYNC_PAT }}
+        run: |
+          if [ -z "${PAT:-}" ]; then
+            echo "::error::DOWNSTREAM_SYNC_PAT is not set. v${{ steps.ver.outputs.value }} is published but not pinned in ha-operating-system/version.yaml, so no bake will contain it. Add the secret (contents:write + pull-requests:write on greenautarky/ha-operating-system) and re-run, or pin by hand."
+            exit 1
+          fi
+
+      - name: Open the bake-pin PR
+        env:
+          GH_TOKEN: ${{ secrets.DOWNSTREAM_SYNC_PAT }}
+        run: bash scripts/ci/pin_os.sh "${{ steps.ver.outputs.value }}"

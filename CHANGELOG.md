@@ -1,3 +1,13 @@
+## Unreleased
+
+- **A release now opens its own OS pin PR.** New workflow `pin-os.yml` runs
+  after a successful Release (tag push) and opens a PR on
+  ha-operating-system moving `greenautarky-site` in `version.yaml` to the new
+  version (`scripts/ci/pin_os.sh`). The pin used to be a manual step that
+  nothing reminded anyone of. Idempotent; fails loudly without the
+  `DOWNSTREAM_SYNC_PAT` secret instead of staying green. CI only, no
+  component change.
+
 ## 2.9.5
 
 - **The account step survives a dropped request.** A create_user request cut
