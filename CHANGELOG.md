@@ -1,4 +1,4 @@
-## Unreleased
+## 2.10.0
 
 - **"Forgot password?" on the login page leads to our PIN reset.** Home
   Assistant's login page linked it to home-assistant.io — container command
