@@ -43,9 +43,12 @@ jobs:
           test -n "$v" || { echo "::error::no version resolved"; exit 1; }
           echo "value=$v" >> "$GITHUB_OUTPUT"
 
+      # The SCRIPT comes from the default branch — an older tag may predate it
+      # (first dispatch for v2.9.5 failed with 127 exactly so). The CHANGELOG
+      # is read from the release tag inside the script.
       - uses: actions/checkout@v4
         with:
-          ref: v${{ steps.ver.outputs.value }}
+          fetch-depth: 0
 
       - name: Guard on DOWNSTREAM_SYNC_PAT
         env:

@@ -25,13 +25,14 @@ KEY="greenautarky-site"
   || { echo "::error::'$VER' is not a version"; exit 1; }
 
 # One-line summary for the version.yaml comment: the first bold sentence
-# under this version's CHANGELOG heading. Optional — the PR is still right
+# under this version's CHANGELOG heading, read from the release tag
+# (falls back to the checked-out CHANGELOG when the tag is not local). Optional — the PR is still right
 # without it, so a missing entry degrades to a pointer, loudly.
 SUMMARY=$(awk -v v="## $VER" '
   $0==v || index($0, v" ")==1 {f=1; next}
   f && /^## / {exit}
   f && match($0, /\*\*[^*]+\*\*/) {print substr($0, RSTART+2, RLENGTH-4); exit}
-' CHANGELOG.md || true)
+' < <(git show "v${VER}:CHANGELOG.md" 2>/dev/null || cat CHANGELOG.md) || true)
 if [ -z "$SUMMARY" ]; then
   echo "::warning::no '## $VER' entry with a bold headline in CHANGELOG.md — the pin comment will only point at the changelog"
   SUMMARY="see greenautarky-onboarding CHANGELOG"
