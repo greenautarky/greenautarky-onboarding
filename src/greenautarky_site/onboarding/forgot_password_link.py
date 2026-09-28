@@ -14,7 +14,8 @@ never carries them (same reason the `/` → wizard redirect patches IndexView).
 ``/auth/authorize`` is registered by the ``frontend`` component as a plain GET
 route whose handler is ``partial(_serve_file, <path to authorize.html>)``. We
 swap that route's handler for one that serves the same file with a small
-script before ``</body>``. The script retargets ``a.forgot-password``; both
+script before ``</body>``. The script retargets ``a.forgot-password`` and
+handles the footer's "Help" button (``HELP_URL``: removed while empty); both
 ``ha-authorize`` and ``ha-auth-flow`` render into light DOM, so a plain
 ``querySelector`` reaches the link.
 
@@ -29,6 +30,7 @@ login page is an outage.
 from __future__ import annotations
 
 import functools
+import json
 import logging
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -49,31 +51,67 @@ RESET_PAGE_URL = GAPasswordResetPageView.url
 MARKER = "data-ga-forgot-password"
 _PATCHED_ATTR = "_ga_forgot_password_patched"
 
-# Two mechanisms, because the link is rendered by Lit AFTER this script runs
-# and is re-rendered whenever the login step changes:
-#  - a MutationObserver rewrites href (so hover/long-press shows OUR address)
-#    and drops target=_blank (the reset page links back to the login itself);
-#  - a capture-phase click handler catches a click on a link the observer has
-#    not reached yet.
-FORGOT_PASSWORD_SCRIPT = f"""<script {MARKER}>
+# Where the login page's "Help" button points (ADR-0040 D7). Home Assistant's
+# stock button (``ha-button`` in ``ha-authorize``'s footer) goes to
+# home-assistant.io/docs/authentication — never right for a resident.
+# EMPTY = remove the button: GA hosts no help page yet, and a link to a domain
+# that does not answer is worse than no button. Set it only once the page is
+# live; it then opens in the same tab.
+HELP_URL = ""
+HELP_SELECTOR = '[href^="https://www.home-assistant.io/docs/authentication"]'
+
+
+def build_login_page_script(help_url: str | None = None) -> str:
+    """The script injected into ``/auth/authorize``.
+
+    ``help_url`` defaults to :data:`HELP_URL`; the parameter exists so the
+    browser tier can prove both behaviours (removed / retargeted).
+
+    Two mechanisms, because the links are rendered by Lit AFTER this script
+    runs and re-rendered whenever the login step changes:
+     - a MutationObserver rewrites href (so hover/long-press shows OUR address)
+       and drops target=_blank (the reset page links back to the login
+       itself) — or removes the Help button when there is no help page;
+     - a capture-phase click handler catches a click on a link the observer
+       has not reached yet.
+    """
+    help_target = HELP_URL if help_url is None else help_url
+    return f"""<script {MARKER}>
 (function () {{
-  var TARGET = "{RESET_PAGE_URL}";
+  var TARGET = {json.dumps(RESET_PAGE_URL)};
   var SELECTOR = "a.forgot-password";
+  var HELP_TARGET = {json.dumps(help_target)};
+  var HELP_SELECTOR = {json.dumps(HELP_SELECTOR)};
+  function point(el, url) {{
+    el.setAttribute("href", url);
+    el.removeAttribute("target");
+    el.removeAttribute("rel");
+  }}
   function retarget() {{
     var links = document.querySelectorAll(SELECTOR);
     for (var i = 0; i < links.length; i++) {{
-      var a = links[i];
-      if (a.getAttribute("href") === TARGET) continue;
-      a.setAttribute("href", TARGET);
-      a.removeAttribute("target");
-      a.removeAttribute("rel");
+      if (links[i].getAttribute("href") !== TARGET) point(links[i], TARGET);
+    }}
+    var help = document.querySelectorAll(HELP_SELECTOR);
+    for (var j = 0; j < help.length; j++) {{
+      if (HELP_TARGET) point(help[j], HELP_TARGET);
+      else help[j].remove();
     }}
   }}
   document.addEventListener("click", function (e) {{
-    var a = e.target && e.target.closest ? e.target.closest(SELECTOR) : null;
-    if (!a) return;
+    var t = e.target;
+    if (!t || !t.closest) return;
+    if (t.closest(SELECTOR)) {{
+      e.preventDefault();
+      window.location.assign(TARGET);
+      return;
+    }}
+    var h = t.closest(HELP_SELECTOR);
+    if (!h) return;
     e.preventDefault();
-    window.location.assign(TARGET);
+    e.stopPropagation();
+    if (HELP_TARGET) window.location.assign(HELP_TARGET);
+    else h.remove();
   }}, true);
   new MutationObserver(retarget).observe(document.documentElement,
     {{ childList: true, subtree: true }});
@@ -82,18 +120,25 @@ FORGOT_PASSWORD_SCRIPT = f"""<script {MARKER}>
 </script>"""
 
 
-def inject_forgot_password_script(html: str) -> str:
-    """Return ``html`` with the retarget script before ``</body>``.
+FORGOT_PASSWORD_SCRIPT = build_login_page_script()
+
+
+def inject_forgot_password_script(html: str, help_url: str | None = None) -> str:
+    """Return ``html`` with the login-page script before ``</body>``.
 
     Idempotent. Without a ``</body>`` the script is appended — browsers run a
-    trailing script all the same.
+    trailing script all the same. ``help_url``: see
+    :func:`build_login_page_script`.
     """
     if MARKER in html:
         return html
+    script = (
+        FORGOT_PASSWORD_SCRIPT if help_url is None else build_login_page_script(help_url)
+    )
     idx = html.rfind("</body>")
     if idx == -1:
-        return html + FORGOT_PASSWORD_SCRIPT
-    return html[:idx] + FORGOT_PASSWORD_SCRIPT + "\n" + html[idx:]
+        return html + script
+    return html[:idx] + script + "\n" + html[idx:]
 
 
 def _find_authorize_route(hass: HomeAssistant):

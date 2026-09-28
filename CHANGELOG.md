@@ -22,6 +22,13 @@
   the admin's included, are untouched. Unit test against Home Assistant's auth
   manager; the device test checks that a session opened with the old password
   no longer refreshes (ADR-0040 D6).
+- **The login page's "Help" button no longer leads to home-assistant.io.** The
+  same injected script handles it: while `HELP_URL` in
+  `forgot_password_link.py` is empty (the shipped value) the button is
+  removed; once a GreenAutarky help page is live, setting the constant points
+  the button there, in the same tab. Browser tier covers both values and the
+  stock page; the e2e test asserts nothing on the real login page links to
+  home-assistant.io (ADR-0040 D7).
 
 - **A release now opens its own OS pin PR.** New workflow `pin-os.yml` runs
   after a successful Release (tag push) and opens a PR on

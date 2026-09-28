@@ -29,6 +29,7 @@ else:
     )
 
 from greenautarky_site.onboarding.forgot_password_link import (
+    HELP_URL,
     RESET_PAGE_URL,
     inject_forgot_password_script,
 )
@@ -38,18 +39,40 @@ pytestmark = [pytest.mark.browser, pytest.mark.asyncio]
 ORIGIN = "http://ga-device.test"
 STOCK_HREF = "https://www.home-assistant.io/docs/locked_out/#forgot-password"
 
-# Renders the link 150 ms after load, then replaces it with a NEW node at
-# 400 ms — the second render is what a login-step change does.
+HELP_HREF = "https://www.home-assistant.io/docs/authentication/"
+GA_HELP_PATH = "/ga-help-for-this-test"
+
+# Renders the link and the footer 150 ms after load, then replaces both with
+# NEW nodes at 400 ms — the second render is what a login-step change does.
+# ``ha-button`` is modelled as Home Assistant's is: a custom element whose
+# ``href``/``target`` end up on an anchor inside its shadow root, so a click on
+# it navigates (or opens a tab) like the real one.
 FAKE_AUTHORIZE = f"""<!DOCTYPE html><html><head><title>Home Assistant</title></head>
 <body><div class="content"><ha-authorize></ha-authorize></div>
 <script>
-  function render(label) {{
+  customElements.define("ha-button", class extends HTMLElement {{
+    static get observedAttributes() {{ return ["href", "target", "rel"]; }}
+    constructor() {{
+      super();
+      this.attachShadow({{mode: "open"}}).innerHTML = "<a part=base><slot></slot></a>";
+    }}
+    attributeChangedCallback() {{
+      var a = this.shadowRoot.querySelector("a");
+      ["href", "target", "rel"].forEach(function (n) {{
+        var v = this.getAttribute(n);
+        if (v === null) a.removeAttribute(n); else a.setAttribute(n, v);
+      }}, this);
+    }}
+  }});
+  function render(label, n) {{
     document.querySelector("ha-authorize").innerHTML =
       '<ha-auth-flow><a class="forgot-password" href="{STOCK_HREF}" ' +
-      'target="_blank" rel="noreferrer noopener">' + label + '</a></ha-auth-flow>';
+      'target="_blank" rel="noreferrer noopener">' + label + '</a></ha-auth-flow>' +
+      '<div class="footer"><ha-button appearance="plain" href="{HELP_HREF}" ' +
+      'target="_blank" rel="noreferrer noopener">Hilfe ' + n + '</ha-button></div>';
   }}
-  setTimeout(function () {{ render("Passwort vergessen?"); }}, 150);
-  setTimeout(function () {{ render("Passwort vergessen? (2)"); }}, 400);
+  setTimeout(function () {{ render("Passwort vergessen?", 1); }}, 150);
+  setTimeout(function () {{ render("Passwort vergessen? (2)", 2); }}, 400);
 </script>
 </body></html>"""
 
@@ -72,6 +95,9 @@ async def _serve(context, authorize_html: str):
             await route.fulfill(body=authorize_html, content_type="text/html; charset=utf-8")
         elif url.startswith(f"{ORIGIN}{RESET_PAGE_URL}"):
             await route.fulfill(body=RESET_PAGE, content_type="text/html; charset=utf-8")
+        elif url.startswith(f"{ORIGIN}{GA_HELP_PATH}"):
+            await route.fulfill(body="<html><title>GA Hilfe</title></html>",
+                                content_type="text/html; charset=utf-8")
         else:  # home-assistant.io and anything else: never leave the machine
             await route.fulfill(body="<html><title>elsewhere</title></html>",
                                 content_type="text/html")
@@ -94,6 +120,46 @@ async def test_stock_page_reproduces_the_defect(browser_page):
     async with browser_page.expect_page() as popup:
         await link.click()
     assert (await popup.value).url.startswith("https://www.home-assistant.io/")
+
+
+async def test_stock_page_help_button_points_at_home_assistant(browser_page):
+    """Same guard for the footer's Help button (ADR-0040 D7): without our
+    script it must behave like Home Assistant's — href on home-assistant.io,
+    opening a new tab — or the Help tests below prove nothing."""
+    page = await _serve(browser_page, FAKE_AUTHORIZE)
+    await page.get_by_text("Hilfe 2", exact=True).wait_for()
+    help_button = page.locator("ha-button")
+    assert await help_button.get_attribute("href") == HELP_HREF
+    async with browser_page.expect_page() as popup:
+        await help_button.click()
+    assert (await popup.value).url.startswith("https://www.home-assistant.io/")
+
+
+async def test_help_button_is_removed_while_there_is_no_help_page(browser_page):
+    """The shipped default: HELP_URL is empty, so the button is gone — also
+    after the re-render, which creates a NEW button."""
+    assert HELP_URL == ""  # precondition: this test is about the shipped default
+    page = await _serve(browser_page, inject_forgot_password_script(FAKE_AUTHORIZE))
+    await page.get_by_text("Passwort vergessen? (2)").wait_for()
+    await page.wait_for_function("document.querySelector('ha-button') === null")
+    assert await page.locator("[href*='home-assistant.io']").count() == 0
+
+
+async def test_help_button_points_at_the_help_page_once_there_is_one(browser_page):
+    help_url = f"{ORIGIN}{GA_HELP_PATH}"
+    page = await _serve(
+        browser_page, inject_forgot_password_script(FAKE_AUTHORIZE, help_url=help_url)
+    )
+    await page.get_by_text("Hilfe 2", exact=True).wait_for()
+    await page.wait_for_function(
+        f"document.querySelector('ha-button').getAttribute('href') === '{help_url}'"
+    )
+    help_button = page.locator("ha-button")
+    assert await help_button.get_attribute("target") is None
+    await help_button.click()
+    await page.wait_for_url(help_url)
+    assert await page.title() == "GA Hilfe"
+    assert len(browser_page.pages) == 1, "the help page opened in a new tab"
 
 
 async def test_the_late_link_points_at_the_reset_page(browser_page):

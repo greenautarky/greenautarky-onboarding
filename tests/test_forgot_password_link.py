@@ -27,6 +27,7 @@ from greenautarky_site.const import PIN_FILE
 from greenautarky_site.onboarding.forgot_password_link import (
     AUTHORIZE_PATH,
     FORGOT_PASSWORD_SCRIPT,
+    HELP_URL,
     MARKER,
     RESET_PAGE_URL,
     async_patch_authorize_page,
@@ -157,6 +158,15 @@ def test_script_lands_before_body_end_and_only_once():
     assert inject_forgot_password_script(once) == once
     # No </body> at all: append instead of dropping the script.
     assert inject_forgot_password_script("<p>x</p>").endswith(FORGOT_PASSWORD_SCRIPT)
+
+
+def test_the_help_button_is_removed_until_a_ga_help_page_is_live():
+    """ADR-0040 D7, pinned: the shipped HELP_URL is empty (= remove Home
+    Assistant's Help button). Switch it on only in the change that makes the
+    help page live — a link to a domain that does not answer is worse than no
+    button. The browser tier proves what each value does."""
+    assert HELP_URL == ""
+    assert 'var HELP_TARGET = "";' in FORGOT_PASSWORD_SCRIPT
 
 
 async def test_integration_setup_installs_the_patch(
