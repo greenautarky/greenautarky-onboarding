@@ -19,6 +19,11 @@
   `tests/test_precompressed_bundle.py` (HA's route answers
   `Content-Encoding: gzip` and decodes to the file) and `--check-compressed`
   in CI. Cost: the shipped component grows by about 6.6 MB of `.gz`.
+  Only the wizard bundle gets `.gz` siblings; no file in it is modified at
+  serve time. The login page that 2.10.0 injects its script into is Core's
+  file and is sent from memory, not through `FileResponse` — pinned by a test
+  that puts a stale `authorize.html.gz` next to it and requests with
+  `Accept-Encoding: gzip` (red when the injected page is served as a file).
 
 ## 2.10.0
 
