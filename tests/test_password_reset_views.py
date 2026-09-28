@@ -190,3 +190,30 @@ async def test_no_pin_file_means_no_reset(hass, household):
 async def test_the_pin_accepts_the_label_format(hass, household):
     """The label prints ``123-456``; the page sends what the resident typed."""
     assert (await _users(hass, "123-456")).status == 200
+
+
+async def _by_name(hass, name: str):
+    return next(u for u in await hass.auth.async_get_users() if u.name == name)
+
+
+async def test_a_reset_ends_that_users_sessions_and_only_theirs(hass, household):
+    """ADR-0040 D6: a device still logged in with the old password is logged
+    out. The admin's session — a different user — must survive the reset."""
+    master = await _by_name(hass, "Anna")
+    admin = await _by_name(hass, "Admin")
+    client = "http://device.test/"
+    old_session = await hass.auth.async_create_refresh_token(master, client)
+    old_access = hass.auth.async_create_access_token(old_session)
+    admin_session = await hass.auth.async_create_refresh_token(admin, client)
+    assert hass.auth.async_get_refresh_token(old_session.id) is not None
+
+    assert (await _reset(hass, "anna@example.org")).status == 200
+
+    assert hass.auth.async_get_refresh_token(old_session.id) is None, (
+        "the session opened with the OLD password still refreshes after a reset"
+    )
+    assert hass.auth.async_validate_access_token(old_access) is None
+    assert not (await _by_name(hass, "Anna")).refresh_tokens
+    assert hass.auth.async_get_refresh_token(admin_session.id) is not None, (
+        "a reset of the master ended the admin's session"
+    )

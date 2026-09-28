@@ -16,6 +16,12 @@
   `browser` tier + CI job runs the link script in Chromium against a local fake
   page; a device test resets a disposable sub-user on a canary and an e2e test
   follows the real login page's link.
+- **A password reset ends that user's sessions.** After the new password is
+  set, every refresh token of the reset user is revoked, so a browser or app
+  still logged in with the old password is logged out. Other users' sessions,
+  the admin's included, are untouched. Unit test against Home Assistant's auth
+  manager; the device test checks that a session opened with the old password
+  no longer refreshes (ADR-0040 D6).
 
 - **A release now opens its own OS pin PR.** New workflow `pin-os.yml` runs
   after a successful Release (tag push) and opens a PR on

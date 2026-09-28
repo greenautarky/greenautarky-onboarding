@@ -70,6 +70,18 @@ def _verify_pw_reset_pin(
     return hmac.compare_digest(clean_pin.encode(), stored_pin.encode())
 
 
+def _revoke_refresh_tokens(hass: HomeAssistant, user: Any) -> int:
+    """Revoke every refresh token of ``user``. Returns how many were revoked.
+
+    ``async_remove_refresh_token`` also fires the token's revoke callbacks,
+    which close websocket connections opened with it.
+    """
+    tokens = list(user.refresh_tokens.values())
+    for token in tokens:
+        hass.auth.async_remove_refresh_token(token)
+    return len(tokens)
+
+
 class GAPasswordResetPageView(HomeAssistantView):
     """Serve the standalone password reset page."""
 
@@ -253,12 +265,20 @@ class GAPasswordResetView(HomeAssistantView):
                 status_code=404,
             )
 
+        # A reset ends the user's sessions (ADR-0040 D6): every refresh token
+        # of THIS user is revoked, so a device still logged in with the old
+        # password is logged out. Other users' tokens are not touched.
+        revoked = _revoke_refresh_tokens(hass, target_user)
+
         # Reset PIN attempt counter on success
         state["pw_reset_pin_attempts"] = 0
         state["pw_reset_pin_locked_until"] = None
         await store.async_save(state)
 
         _LOGGER.info(
-            "Password reset via PIN for user '%s' (%s)", username, target_user.name
+            "Password reset via PIN for user '%s' (%s); %d session(s) ended",
+            username,
+            target_user.name,
+            revoked,
         )
         return self.json({"status": "ok"})

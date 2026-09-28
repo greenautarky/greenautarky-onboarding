@@ -7,6 +7,9 @@ makes the FIRST user the owner, and the owner counts as admin. If a device's
 master ended up as owner, the master would be excluded from the reset and the
 resident would still be locked out. Only a real device can say.
 
+It also proves D6: a session opened with the sub-user's OLD password no longer
+refreshes after the reset, while the master's session does.
+
 It changes a password — of a DISPOSABLE sub-user it creates and removes again.
 The master's password is never touched; the master is only asserted to be
 listed. Never spends a wrong PIN (that would arm the device's real backoff).
@@ -67,6 +70,11 @@ def _require_pin() -> str:
 
 
 async def _login(session, username: str, password: str) -> str:
+    return (await _login_tokens(session, username, password))["access_token"]
+
+
+async def _login_tokens(session, username: str, password: str) -> dict:
+    """The full /auth/token answer: access_token AND refresh_token."""
     async with session.post(
         f"{DEVICE_URL}/auth/login_flow",
         json={"client_id": CLIENT_ID, "handler": ["homeassistant", None],
@@ -88,7 +96,17 @@ async def _login(session, username: str, password: str) -> str:
               "client_id": CLIENT_ID},
     ) as resp:
         assert resp.status == 200, await resp.text()
-        return (await resp.json())["access_token"]
+        return await resp.json()
+
+
+async def _refresh(session, refresh_token: str) -> int:
+    """HTTP status of a refresh_token grant — 200 while the session lives."""
+    async with session.post(
+        f"{DEVICE_URL}/auth/token",
+        data={"grant_type": "refresh_token", "refresh_token": refresh_token,
+              "client_id": CLIENT_ID},
+    ) as resp:
+        return resp.status
 
 
 async def _post(session, headers, path, body):
@@ -122,8 +140,9 @@ async def test_a_household_password_is_reset_with_the_sticker_pin() -> None:
     new_pw = f"pw-{secrets.token_urlsafe(12)}"
 
     async with aiohttp.ClientSession() as session:
-        master_h = {"Authorization":
-                    f"Bearer {await _login(session, MASTER_USERNAME, MASTER_PASSWORD)}"}
+        master_tokens = await _login_tokens(session, MASTER_USERNAME, MASTER_PASSWORD)
+        master_refresh = master_tokens["refresh_token"]
+        master_h = {"Authorization": f"Bearer {master_tokens['access_token']}"}
         async with session.post(f"{API}/sub_user/invite", headers=master_h,
                                 json={}) as r:
             assert r.status == 200, await r.text()
@@ -139,6 +158,15 @@ async def test_a_household_password_is_reset_with_the_sticker_pin() -> None:
         uid = next(u["user_id"] for u in listing["sub_users"] if u.get("name") == name)
 
         try:
+            # A session opened with the OLD password — e.g. a phone still
+            # logged in. ADR-0040 D6: the reset must end it.
+            old_session = (await _login_tokens(session, username, old_pw))[
+                "refresh_token"
+            ]
+            assert await _refresh(session, old_session) == 200, (
+                "precondition: the old-password session refreshes before the reset"
+            )
+
             st, body = await _post(session, {}, "password_reset/users", {"pin": pin})
             assert st == 200, body
             listed = {u["username"] for u in body["users"]}
@@ -159,6 +187,13 @@ async def test_a_household_password_is_reset_with_the_sticker_pin() -> None:
             assert await _try_login(session, username, new_pw), "new password refused"
             assert not await _try_login(session, username, old_pw), (
                 "the OLD password still logs in after a reset"
+            )
+            assert await _refresh(session, old_session) != 200, (
+                "the session opened with the OLD password still refreshes after "
+                "the reset — the reset did not end the user's sessions (D6)"
+            )
+            assert await _refresh(session, master_refresh) == 200, (
+                "resetting a sub-user ended the MASTER's session"
             )
         finally:
             await _post(session, master_h, "sub_user/remove", {"sub_user_id": uid})
