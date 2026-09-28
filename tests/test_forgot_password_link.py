@@ -81,6 +81,35 @@ async def test_login_page_carries_the_retarget_script(
     assert resp.content_type == "text/html"
 
 
+async def test_a_gz_sibling_of_the_login_page_cannot_shadow_the_injection(
+    hass, authorize_route, hass_client_no_auth
+):
+    """2.11.0 ships precompressed ``.gz`` siblings, and aiohttp's FileResponse
+    sends ``<file>.gz`` INSTEAD of the file whenever one exists and the browser
+    accepts gzip. A page modified at serve time must therefore never go out
+    through FileResponse: Core's frontend may ship ``authorize.html.gz`` (the
+    stock bytes), and every real browser sends ``Accept-Encoding: gzip`` — the
+    resident would get the stock page, link to home-assistant.io and all,
+    while every test without that header stayed green."""
+    import gzip
+
+    authorize_route.with_name("authorize.html.gz").write_bytes(
+        gzip.compress(STOCK_PAGE.encode())
+    )
+    _write_pin()
+    assert await async_patch_authorize_page(hass) is True
+
+    client = await hass_client_no_auth()
+    resp = await client.get(AUTHORIZE_PATH, headers={"Accept-Encoding": "gzip"})
+    body = await resp.text()
+
+    assert resp.status == 200
+    assert MARKER in body, (
+        "a gzip-accepting browser got the stock login page from its .gz sibling "
+        "— 'Forgot password?' still leads to home-assistant.io"
+    )
+
+
 async def test_the_patch_reaches_a_route_that_already_served_requests(
     hass, authorize_route, hass_client_no_auth
 ):

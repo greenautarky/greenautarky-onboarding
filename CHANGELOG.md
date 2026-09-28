@@ -1,3 +1,30 @@
+## 2.11.0
+
+- **The wizard's JavaScript is sent compressed.** Every served `.js`/`.html`
+  in the wizard bundle went over the wire uncompressed although browsers
+  accept gzip: Home Assistant's static routes (aiohttp `FileResponse`) never
+  compress on the fly, they serve a precompressed `<file>.gz` sibling when one
+  exists — and the bundle shipped none. Measured 2026-09-25 on a canary: the
+  entry bundle `greenautarky-setup.<hash>.js` answered `Content-Length: 735608`
+  with no `Content-Encoding`. The release artifact now carries a `.gz` for each
+  of the 929 served assets; the entry bundle drops from 735,608 to 228,641
+  bytes on the wire (−69 %), the HTML shell from 20,144 to 14,603. It matters
+  most where onboarding happens: a resident on weak Wi-Fi first meets the
+  device through this page.
+  The `.gz` files are generated at packaging time, not committed:
+  `scripts/package_release.sh` (called by `release.yml`) writes them with
+  `gzip -9 -n` on the staged tree, checks that tree with
+  `build_bundle.sh --check-compressed` and tars exactly it. Enforced by
+  `tests/test_release_package.py` (unpacks the real tarball),
+  `tests/test_precompressed_bundle.py` (HA's route answers
+  `Content-Encoding: gzip` and decodes to the file) and `--check-compressed`
+  in CI. Cost: the shipped component grows by about 6.6 MB of `.gz`.
+  Only the wizard bundle gets `.gz` siblings; no file in it is modified at
+  serve time. The login page that 2.10.0 injects its script into is Core's
+  file and is sent from memory, not through `FileResponse` — pinned by a test
+  that puts a stale `authorize.html.gz` next to it and requests with
+  `Accept-Encoding: gzip` (red when the injected page is served as a file).
+
 ## 2.10.0
 
 - **"Forgot password?" on the login page leads to our PIN reset.** Home

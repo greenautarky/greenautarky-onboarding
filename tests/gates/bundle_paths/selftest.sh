@@ -63,7 +63,24 @@ _case() { # name  expect(fail|pass)  urlbase  domain  js
     rm -f "${d}/src/greenautarky_site/frontend_bundle/BUILD-INFO.txt"
     bash "${d}/scripts/build_bundle.sh" --hash >/dev/null 2>&1 ;;
   esac
-  out="$(bash "${d}/scripts/build_bundle.sh" --check 2>&1)"; rc=$?
+  # Precompressed-sibling cases (the .gz are generated, never committed, so
+  # they are not in SHA256SUMS and need no re-hash after a mutation).
+  local fb="${d}/src/greenautarky_site/frontend_bundle/frontend_latest/greenautarky-setup.abc123.js"
+  local mode="--check"
+  case "${name}" in
+    *"missing .gz"*) bash "${d}/scripts/build_bundle.sh" --compress >/dev/null 2>&1
+      rm -f "${fb}.gz"; mode="--check-compressed" ;;
+    *"all .gz present"*) bash "${d}/scripts/build_bundle.sh" --compress >/dev/null 2>&1
+      mode="--check-compressed" ;;
+    *"stale .gz"*) printf '%s\n' 'u="/greenautarky_site_static/old.js"' | gzip -n -c > "${fb}.gz" ;;
+    *"orphan .gz"*) printf 'x' | gzip -n -c > "${fb%.js}.gone.js.gz" ;;
+  esac
+  out="$(bash "${d}/scripts/build_bundle.sh" "${mode}" 2>&1)"; rc=$?
+  case "${name}" in *".gz"*)
+    # Assert the SPECIFIC guard fired, not that something failed.
+    if [ "${expect}" = "fail" ] && ! echo "${out}" | grep -qE 'no \.gz sibling|does not decompress|is an orphan'; then
+      rc=0; fi ;;
+  esac
   if [ "${expect}" = "fail" ]; then
     [ "${rc}" -ne 0 ] && _ok "must-fail: ${name}" || { _bad "must-fail: ${name} — gate stayed GREEN"; echo "${out}" | sed 's/^/        /'; }
   else
@@ -95,6 +112,15 @@ _case "URL_BASE unreadable — must FAIL, never skip" fail "# URL_BASE was renam
 _case "runtime-assembled path, constant flipped to the retired namespace" fail \
   "${GOOD_URLBASE}" "${GOOD_DOMAIN}" \
   '.p="/greenautarky_site_static/frontend_latest/";const a=JSON.parse(String.raw`{"b":"greenautarky_onboarding"}`).b,i=`/api/${a}`;fetch(`${i}/status`)'
+
+# --- precompressed siblings (2026-09-25): aiohttp serves <file>.gz instead ---
+# of the file whenever the client accepts gzip, so a missing .gz costs bytes on
+# the wire and a stale one silently serves OLD code.
+_case "missing .gz — served uncompressed (--check-compressed)" fail "${GOOD_URLBASE}" "${GOOD_DOMAIN}" "${GOOD_JS}"
+_case "stale .gz — a different version than its source" fail "${GOOD_URLBASE}" "${GOOD_DOMAIN}" "${GOOD_JS}"
+_case "orphan .gz — source gone, still served" fail "${GOOD_URLBASE}" "${GOOD_DOMAIN}" "${GOOD_JS}"
+_case "all .gz present and matching (--check-compressed)" pass "${GOOD_URLBASE}" "${GOOD_DOMAIN}" "${GOOD_JS}"
+# A developer tree has no .gz at all; --check must stay green there.
 
 # --- must-pass: correct bundles, including stock HA namespaces --------------
 _case "correct paths + stock HA namespaces" pass "${GOOD_URLBASE}" "${GOOD_DOMAIN}" "${GOOD_JS}"
