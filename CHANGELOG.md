@@ -1,5 +1,35 @@
 ## Unreleased
 
+- **"Forgot password?" on the login page leads to our PIN reset.** Home
+  Assistant's login page linked it to home-assistant.io — container command
+  lines, written for whoever runs the server. A resident who forgot the
+  password landed there, while the component has shipped a PIN reset
+  (`/greenautarky-password-reset`: sticker PIN → pick the household user → new
+  password; admin accounts excluded) that nothing linked to. `/auth/authorize`
+  is now served with a small script that points the link there and opens it in
+  the same tab; only on devices with an onboarding PIN, since the reset needs
+  one. If Core ever serves the page differently, the stock link stays and the
+  log says so at WARNING (ADR-0040).
+- **The reset endpoints are tested.** They had no test at all: PIN required,
+  a wrong PIN counts and arms the backoff, the master is listed and resettable
+  (the new password logs in, the old one does not), an admin is neither. New
+  `browser` tier + CI job runs the link script in Chromium against a local fake
+  page; a device test resets a disposable sub-user on a canary and an e2e test
+  follows the real login page's link.
+- **A password reset ends that user's sessions.** After the new password is
+  set, every refresh token of the reset user is revoked, so a browser or app
+  still logged in with the old password is logged out. Other users' sessions,
+  the admin's included, are untouched. Unit test against Home Assistant's auth
+  manager; the device test checks that a session opened with the old password
+  no longer refreshes (ADR-0040 D6).
+- **The login page's "Help" button no longer leads to home-assistant.io.** The
+  same injected script handles it: while `HELP_URL` in
+  `forgot_password_link.py` is empty (the shipped value) the button is
+  removed; once a GreenAutarky help page is live, setting the constant points
+  the button there, in the same tab. Browser tier covers both values and the
+  stock page; the e2e test asserts nothing on the real login page links to
+  home-assistant.io (ADR-0040 D7).
+
 - **A release now opens its own OS pin PR.** New workflow `pin-os.yml` runs
   after a successful Release (tag push) and opens a PR on
   ha-operating-system moving `greenautarky-site` in `version.yaml` to the new

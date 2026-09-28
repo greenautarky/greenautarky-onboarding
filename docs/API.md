@@ -33,6 +33,11 @@ top-level paths. `hass.callApi("get", "greenautarky_site/x")` from frontend JS.
 | POST `/api/greenautarky_site/password_reset/users` | open (PIN-gated, rate-limited) | List resettable (non-admin) users after PIN proof. |
 | POST `/api/greenautarky_site/password_reset` | open (PIN-gated, rate-limited) | Reset a tenant user's password. Admin accounts are refused. |
 
+The login page's stock "Forgot password?" link (`/auth/authorize`) is pointed at
+`/greenautarky-password-reset` on devices that have an onboarding PIN
+(`onboarding/forgot_password_link.py`, ADR-0040). Without a PIN the stock link
+stays.
+
 ## Consent re-confirmation (`consent_views.py`)
 
 | Method+Path | Auth | What |

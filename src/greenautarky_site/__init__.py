@@ -99,6 +99,7 @@ from .onboarding import (
     GAPasswordResetView,
     GAPinVerifyView,
 )
+from .onboarding.forgot_password_link import async_patch_authorize_page
 from .onboarding.pin import _migrate_legacy_pin
 from .rooms_sync import GARoomsSyncView
 from .scoping import (
@@ -380,6 +381,9 @@ async def _async_setup_common(hass: HomeAssistant) -> bool:
     hass.http.register_view(GAPasswordResetPageView())
     hass.http.register_view(GAPasswordResetUsersView())
     hass.http.register_view(GAPasswordResetView())
+    # The login page's stock "Forgot password?" goes to home-assistant.io;
+    # point it at the PIN reset above (ADR-0040). Never blocks setup.
+    await async_patch_authorize_page(hass)
 
     # Consent HTTP views (authenticated, always available)
     hass.http.register_view(GAConsentPageView())

@@ -74,6 +74,7 @@ async def test_module_imports() -> None:
         "greenautarky_site.onboarding.wizard",
         "greenautarky_site.onboarding.pin",
         "greenautarky_site.onboarding.password_reset",
+        "greenautarky_site.onboarding.forgot_password_link",
         "greenautarky_site.household",
         "greenautarky_site.household.masters",
         "greenautarky_site.household.sub_users",
