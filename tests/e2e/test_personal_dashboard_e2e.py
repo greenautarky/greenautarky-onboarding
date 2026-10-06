@@ -21,7 +21,7 @@ All API calls go through Playwright's request context (node-side network,
 unaffected by pytest_socket). Skipped unless env is set; CANARIES ONLY;
 cleans up the throwaway sub-user via the master API.
 
-    GA_DEVICE_URL=http://<device-ip>:8123 \
+    GA_DEVICE_URL=http://<device-ip>[:<port>] \
     GA_DEVICE_MASTER_USERNAME=... GA_DEVICE_MASTER_PASSWORD=... \
     pytest tests/e2e -m e2e
 """
@@ -41,7 +41,10 @@ playwright_async = pytest.importorskip(
 
 pytestmark = [pytest.mark.e2e, pytest.mark.asyncio]
 
-DEVICE_URL = os.environ.get("GA_DEVICE_URL", "").rstrip("/")
+# Origin + client_id come from one place: Core refuses a mesh-IP client_id
+# without a port, and the browser drops :80 from hassUrl (device_target.py).
+from device_target import CLIENT_ID, DEVICE_URL  # noqa: E402
+
 MASTER_USERNAME = os.environ.get("GA_DEVICE_MASTER_USERNAME", "")
 MASTER_PASSWORD = os.environ.get("GA_DEVICE_MASTER_PASSWORD", "")
 
@@ -50,7 +53,6 @@ requires_device = pytest.mark.skipif(
     reason="GA_DEVICE_URL / master credentials not set",
 )
 
-CLIENT_ID = f"{DEVICE_URL}/" if DEVICE_URL else "http://device/"
 
 
 async def _master_token(request_ctx) -> str:

@@ -13,7 +13,10 @@ these at a production device.
 Environment (both tiers):
 
 ```bash
-export GA_DEVICE_URL=http://<device-ip>:8123     # NetBird/Tailscale mesh IP
+export GA_DEVICE_URL=http://<device-ip>:80       # NetBird/Tailscale mesh IP; Core >= 2026.8
+                                                 # serves on :80, older Core on :8123 (ADR-0038).
+                                                 # The client_id and the browser origin are
+                                                 # derived in tests/device_target.py.
 export GA_DEVICE_MASTER_USERNAME=<master login>  # a flagged master, NOT admin
                                                  # (the PROVIDER username, e.g.
                                                  #  test@greenautarky.local — not the display name)
