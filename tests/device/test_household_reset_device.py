@@ -21,7 +21,7 @@ KB #169.
 Self-cleaning: every sub-user it creates is removed again, and it refuses to
 run at all if the master already owns sub-users it did not create.
 
-    GA_DEVICE_URL=http://<device-ip>:8123 \
+    GA_DEVICE_URL=http://<device-ip>[:<port>] \
     GA_DEVICE_MASTER_USERNAME=<master login> \
     GA_DEVICE_MASTER_PASSWORD=<master password> \
     GA_DEVICE_PIN=<6-digit sticker PIN> \
@@ -40,12 +40,14 @@ import pytest
 
 pytestmark = [pytest.mark.device, pytest.mark.asyncio]
 
-DEVICE_URL = os.environ.get("GA_DEVICE_URL", "").rstrip("/")
+# Origin + client_id come from one place: Core refuses a mesh-IP client_id
+# without a port, and the browser drops :80 from hassUrl (device_target.py).
+from device_target import CLIENT_ID, DEVICE_URL  # noqa: E402
+
 MASTER_USERNAME = os.environ.get("GA_DEVICE_MASTER_USERNAME", "")
 MASTER_PASSWORD = os.environ.get("GA_DEVICE_MASTER_PASSWORD", "")
 DEVICE_PIN = os.environ.get("GA_DEVICE_PIN", "")
 
-CLIENT_ID = f"{DEVICE_URL}/" if DEVICE_URL else "http://device/"
 API = f"{DEVICE_URL}/api/greenautarky_site"
 
 requires_device = pytest.mark.skipif(
