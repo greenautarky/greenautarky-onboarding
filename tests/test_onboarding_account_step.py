@@ -366,3 +366,59 @@ async def test_two_spellings_of_one_address_are_one_account(hass) -> None:
     assert usernames == ["thomas@example.invalid"], (
         f"one address must be one credential, in one spelling — got {usernames}"
     )
+
+
+# --------------------------------------------------------------------------- #
+# A new resident starts with 24 h / DMY (reported 2026-10-08)
+# --------------------------------------------------------------------------- #
+
+
+async def _stored_locale(hass, hass_storage, user_id: str) -> tuple[Any, Any]:
+    """(what Core's frontend user store holds, what it wrote to .storage)."""
+    from homeassistant.components.frontend.storage import async_user_store
+
+    live = (await async_user_store(hass, user_id)).data.get("language")
+    on_disk = (hass_storage.get(f"frontend.user_data_{user_id}") or {}).get("data", {}).get("language")
+    return live, on_disk
+
+
+@pytest.mark.asyncio
+async def test_the_account_step_gives_the_resident_a_24h_clock(hass, hass_storage) -> None:
+    """The seam: the real account-step view, read back through Core's own store.
+
+    Without it the resident's Profile says "auto", the frontend takes the
+    browser language, and a phone in English draws every chart with 12-hour
+    times (reported 2026-10-08).
+    """
+    await _install_hass_auth_provider(hass)
+    _seed(hass)
+    resp = await _post(hass, "clock@example.invalid", name="Clock")
+    assert resp.status == 200
+    user = next(u for u in hass.auth._store._users.values() if u.name == "Clock")
+
+    live, on_disk = await _stored_locale(hass, hass_storage, user.id)
+    for got in (live, on_disk):
+        assert got is not None, "the account step left the resident's locale unset"
+        assert got.get("time_format") == "24", got
+        assert got.get("date_format") == "DMY", got
+
+
+@pytest.mark.asyncio
+async def test_adopting_an_account_keeps_its_explicit_12h_clock(hass, hass_storage) -> None:
+    """A retry that adopts an existing account must not overrule its owner."""
+    from homeassistant.components.frontend.storage import async_user_store
+
+    await _install_hass_auth_provider(hass)
+    _seed(hass)
+    await _post(hass, "mine@example.invalid", name="Mine")
+    user = next(u for u in hass.auth._store._users.values() if u.name == "Mine")
+    store = await async_user_store(hass, user.id)
+    await store.async_set_item(
+        "language", {"language": "en", "time_format": "12", "date_format": "MDY"}
+    )
+
+    again = await _post(hass, "mine@example.invalid", name="Mine")
+    assert again.status == 200
+    live, on_disk = await _stored_locale(hass, hass_storage, user.id)
+    for got in (live, on_disk):
+        assert got == {"language": "en", "time_format": "12", "date_format": "MDY"}, got

@@ -503,3 +503,21 @@ async def test_set_enabled_rejects_foreign_sub_user(hass) -> None:
     )
     assert resp.status == 403
     assert (await hass.auth.async_get_user(sub.id)).is_active is True
+
+
+async def test_join_gives_the_household_member_a_24h_clock(hass, hass_storage) -> None:
+    """The seam: a member joining by invite, read back through Core's own store."""
+    from homeassistant.components.frontend.storage import async_user_store
+
+    await async_setup_component(hass, "person", {})
+    _seed(hass)
+    master = await _make_master(hass)
+    pin = await _issue_invite(hass, master)
+    bob = await _join(hass, master, pin)
+
+    live = (await async_user_store(hass, bob.id)).data.get("language")
+    on_disk = (hass_storage.get(f"frontend.user_data_{bob.id}") or {}).get("data", {}).get("language")
+    for got in (live, on_disk):
+        assert got is not None, "the join left the member's locale unset"
+        assert got.get("time_format") == "24", got
+        assert got.get("date_format") == "DMY", got

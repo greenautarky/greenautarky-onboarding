@@ -1,3 +1,25 @@
+## 2.12.0
+
+- **A new resident sees a 24-hour clock and day-month-year dates.** Home
+  Assistant keeps the time and date format per person, in their frontend user
+  data (`.storage/frontend.user_data_<user_id>`, key `language`, fields
+  `time_format` and `date_format`). A user who never opened Profile has none,
+  and the frontend then uses the format of the BROWSER's language — a phone in
+  English drew the temperature and humidity charts with 12-hour times
+  (reported 2026-10-08). There is no site-wide default for these fields in
+  Core 2026.8 (`frontend.system_data` carries `core`, `home` and `energy`
+  only). Both places this component creates a person now write
+  `time_format: "24"` and `date_format: "DMY"` through Core's own frontend
+  user store: the wizard's account step and a household member joining by
+  invite. A field is written only while it is unset or `"language"`
+  (Profile's "auto"); `"12"`, `"system"`, `"MDY"`, `"YMD"` are never touched,
+  so an account the account step adopts on a retry keeps what its owner
+  chose. Existing users are backfilled by ga_manager 0.236.0 with the same
+  rule. Tests: the real account-step and join views, read back from Core's
+  store and from `.storage` (`tests/test_onboarding_account_step.py`,
+  `tests/test_sub_user_join.py`), and the guard on its own
+  (`tests/test_locale_defaults.py`; removing it turns 6 tests red).
+
 ## 2.11.0
 
 - **The wizard's JavaScript is sent compressed.** Every served `.js`/`.html`
