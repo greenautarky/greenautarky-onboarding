@@ -15,7 +15,7 @@ A user who never opened Profile has no such object, and the frontend falls back
 to ``"language"`` — the format of the BROWSER's language. A resident whose
 phone runs in English therefore sees 12-hour times on every chart
 (``apexcharts-card`` reads ``hass.locale.time_format`` the same way). Reported
-by Ahmad, 2026-10-08. There is no site-wide default for these two fields:
+from a test device, 2026-10-08. There is no site-wide default for these two fields:
 ``frontend.system_data`` carries ``core``/``home``/``energy`` only.
 
 WHAT

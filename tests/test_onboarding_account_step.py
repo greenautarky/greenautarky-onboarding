@@ -369,7 +369,7 @@ async def test_two_spellings_of_one_address_are_one_account(hass) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# A new resident starts with 24 h / DMY (Ahmad, 2026-10-08)
+# A new resident starts with 24 h / DMY (reported 2026-10-08)
 # --------------------------------------------------------------------------- #
 
 
@@ -388,7 +388,7 @@ async def test_the_account_step_gives_the_resident_a_24h_clock(hass, hass_storag
 
     Without it the resident's Profile says "auto", the frontend takes the
     browser language, and a phone in English draws every chart with 12-hour
-    times (Ahmad, 2026-10-08).
+    times (reported 2026-10-08).
     """
     await _install_hass_auth_provider(hass)
     _seed(hass)
