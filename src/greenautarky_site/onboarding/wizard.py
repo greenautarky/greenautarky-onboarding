@@ -32,6 +32,7 @@ from ..const import SITE_DEFAULT_LANGUAGE
 from ..household.dashboards_admin import _reconcile_dashboard_visibility
 from ..household.masters import _read_master_user_ids, _write_master_users
 from ..household.sub_users import _async_create_linked_person
+from ..locale_defaults import async_apply_resident_locale_defaults
 from ..redirects import redirect_keeping_query
 from ..store import _async_get_hass_provider, _get_state, _get_store
 from .pin import _check_pin_verified, _pin_required
@@ -680,6 +681,11 @@ class GAOnboardingCreateUserView(HomeAssistantView):
 
         # Create a linked Person (guaranteed fleet-wide — ADR-0006).
         await _async_create_linked_person(hass, name, user.id)
+
+        # A resident starts with a 24-hour clock and day-month-year dates —
+        # never over a choice the user already made (an adopted account keeps
+        # its own). Never raises. See locale_defaults.
+        await async_apply_resident_locale_defaults(hass, user.id)
 
         # Persist the site language (.storage/core.config). Best-effort: a
         # failed language write must not cost the tenant their new account.

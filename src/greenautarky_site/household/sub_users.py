@@ -36,6 +36,7 @@ from ..const import (
     SUB_USER_JOIN_MAX_DELAY,
     SUB_USER_MIN_PASSWORD_LEN,
 )
+from ..locale_defaults import async_apply_resident_locale_defaults
 from ..redirects import redirect_keeping_query
 from ..store import _async_get_hass_provider, _get_state, _get_store
 from .dashboards_admin import (
@@ -420,6 +421,10 @@ class GASubUserJoinView(HomeAssistantView):
         # device_trackers → no location; presence stays opt-in). ADR-0006
         # decision: guaranteed fleet-wide (load 'person' if the OS didn't).
         await _async_create_linked_person(hass, name, user.id)
+
+        # A household member starts with a 24-hour clock and day-month-year
+        # dates, like the resident who invited them. Never raises.
+        await async_apply_resident_locale_defaults(hass, user.id)
 
         # Record the parent relationship + the sub-user's own consent + consume
         # the one-time invite. The consent record (who = user.id via the key /
