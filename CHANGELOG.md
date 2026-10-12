@@ -1,3 +1,17 @@
+## 2.12.1
+
+- **Two wizard texts reworded (German), approved 2026-10-12.** Welcome intro:
+  "Lassen Sie uns Ihr Smart Home einrichten." becomes "Lassen Sie uns Ihren
+  KI-Butler einrichten." Ethernet intro: now says the device connects over
+  mobile (LTE) by default and that releasing Ethernet additionally makes it
+  reachable on the local network. English strings, UI and behaviour are
+  unchanged. Bundle rebuilt from greenautarky/frontend branch
+  `ga/wizard-texts-2026-10-12` (b54c68651, one commit on the previous pin
+  8e780bc72). Measured: of the 98 DE + 98 EN wizard strings exactly 2 differ
+  between the old and the new bundle; both entry bundles (es5, latest) carry
+  them. The worker chunk names also changed (minifier variable names only,
+  same size); the build stamp moved to 20261012.0.
+
 ## 2.12.0
 
 - **A new resident sees a 24-hour clock and day-month-year dates.** Home
