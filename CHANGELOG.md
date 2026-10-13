@@ -1,3 +1,20 @@
+## 2.12.2
+
+- **The wizard no longer shows the "Ihr KI-Butler" info page.** Decision
+  2026-10-13: the page ("Über Ihren GreenAutarky KI-Butler", "Erste Schritte",
+  "Hilfe benötigt?") is removed. After the account is created the wizard goes
+  straight to the telemetry step; the progress bar now spans 6 steps instead
+  of 7. The page was frontend-only: the server never recorded a step for it, so
+  nothing server-side changes and a device whose state still lists
+  `info_pages` completes like any other (test added). Bundle rebuilt from
+  greenautarky/frontend branch `ga/remove-ki-butler-info-step` (97006c336, on
+  the previous pin 17848cbfc); build stamp 20261013.0. Measured against the
+  2.12.1 bundle: the wizard strings go from 98 to 97 per language: exactly 1 DE
+  + 1 EN are gone (`info_pages.header`) and no other string differs, in both
+  entry bundles (es5, latest); the 2.12.1 welcome and Ethernet texts are
+  unchanged. The unused `page-info` and
+  `ga-setup-info-pages` components were deleted there.
+
 ## 2.12.1
 
 - **Two wizard texts reworded, German and English, approved 2026-10-12.**
