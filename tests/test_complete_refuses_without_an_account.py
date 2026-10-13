@@ -105,3 +105,31 @@ async def test_the_guard_reads_the_recorded_step_not_the_user_count(hass):
 
     assert resp.status == 409
     assert st["completed"] is False
+
+
+@pytest.mark.parametrize(
+    "steps_done",
+    [
+        ["pin", "gdpr", "account", "info_pages", "telemetry"],
+        ["info_pages", "account"],
+    ],
+)
+async def test_a_device_with_the_removed_info_step_recorded_still_completes(
+    hass, steps_done
+):
+    """2026-10-13: the "Ihr KI-Butler" info page was removed from the wizard.
+    A device whose state still lists the retired ``info_pages`` step (written
+    by an older build, or sent by a cached older bundle) must finish like any
+    other — an unknown legacy entry is not a reason to stick on the wizard.
+    The guard reads ``account``, nothing else."""
+    from homeassistant.components.frontend import DATA_PANELS
+
+    hass.data.setdefault(DATA_PANELS, {})
+    st = _seed(hass, steps_done=steps_done)
+
+    resp = await GAOnboardingCompleteView().post(_FakeRequest(hass, {}))
+
+    assert resp.status == 200
+    assert st["completed"] is True
+    assert "complete" in st["steps_done"]
+    assert "info_pages" in st["steps_done"]  # left untouched, not required
