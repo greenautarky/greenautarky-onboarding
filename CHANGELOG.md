@@ -1,3 +1,18 @@
+## 2.12.3
+
+- **The Ethernet step now records what the resident chose.** `consents.ethernet`
+  was written as `{version, accepted_at}` whether the switch was on or off, so
+  the record said "accepted" with no value (found on the BOSv1.5.1-rc4 bench
+  run, 2026-10-13; EthernetView called `async_record_consent` unconditionally
+  and `enable_ethernet` was never stored). The record now carries
+  `value: true|false`. Backwards compatible: `value` is an additive key, the
+  version check (`get_outdated_consents`) never reads it, and records written
+  before 2.12.3 simply have no `value` (= unknown, not "off"). Other consent
+  types are unchanged (no `value`). Tests: on is stored as true, off as false,
+  an absent field as false, and legacy and new records are both current
+  (`tests/test_ethernet_consent_records_the_choice.py`; red before the fix: 4
+  of 5 failed). No frontend change; bundle unchanged.
+
 ## 2.12.2
 
 - **The wizard no longer shows the "Ihr KI-Butler" info page.** Decision

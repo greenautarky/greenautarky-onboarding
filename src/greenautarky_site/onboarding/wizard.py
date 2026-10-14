@@ -470,8 +470,11 @@ class GAOnboardingEthernetView(HomeAssistantView):
         body = await request.json()
         enable_ethernet = bool(body.get("enable_ethernet", False))
 
-        # Record consent via the version-tracked consent system
-        await async_record_consent(hass, store, state, "ethernet")
+        # Record consent via the version-tracked consent system, WITH the
+        # choice: until 2.12.3 "on" and "off" left the same record.
+        await async_record_consent(
+            hass, store, state, "ethernet", value=enable_ethernet
+        )
 
         if enable_ethernet:
 

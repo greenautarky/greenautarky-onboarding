@@ -63,8 +63,14 @@ async def async_record_consent(
     store: Store[dict[str, Any]],
     state: dict[str, Any],
     consent_type: str,
+    value: bool | None = None,
 ) -> bool:
     """Record that a user has accepted the current version of a consent type.
+
+    ``value`` is the choice behind the consent, for types that are a switch
+    (Ethernet on/off). It is stored as an extra ``value`` key; records without
+    it (all written before 2.12.3, and types that are plain acceptances) stay
+    valid, and the version check never reads it.
 
     Returns True if the consent was recorded, False if the type is unknown.
     """
@@ -76,6 +82,8 @@ async def async_record_consent(
         "version": CONSENT_TYPES[consent_type],
         "accepted_at": datetime.now(UTC).isoformat(),
     }
+    if value is not None:
+        consents[consent_type]["value"] = bool(value)
     await store.async_save(state)
 
     # Clear the repair issue
