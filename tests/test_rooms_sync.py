@@ -786,3 +786,98 @@ async def test_a_clean_sync_still_answers_200_and_ok(hass, config_entry):
     assert body["ok"] is True and body["failed"] == 0
     assert body["rooms"][0]["ok"] is True and body["rooms"][0]["error"] is None
     assert dr.async_get(hass).async_get(device.id).area_id == "room_1a4"
+
+
+# ─── Odoo #1336: a room the resident renamed must not come back twice ────
+#
+# Seen on a field device in October 2026 and reproduced on a bench device:
+# rooms were installed by NAME only, because
+# ga_manager's route dropped `ref` (fixed there separately). A resident renamed
+# "Badezimmer" to "WC" in Home Assistant; the next sync matched neither by ref
+# (none on the area) nor by name (renamed), created `badezimmer_2`, moved the
+# sensors into it and left the heating plan on the empty original.
+#
+# The ref map (`rooms_sync_installed_names`) already says which area THIS
+# handler installed under which name. That is a record this code wrote, not a
+# guess at what a resident typed, so it is safe to match on — and it is the
+# only thing left that still knows the renamed room.
+
+
+async def test_a_renamed_room_is_found_by_its_installed_name_not_duplicated(hass, config_entry):
+    _seed(hass)
+    dev = _add_zigbee_device(hass, IEEE_A)
+    room = {"name": "Badezimmer", "members": [IEEE_A]}
+    await _post(hass, {"rooms": [room]})
+    ar.async_get(hass).async_update("badezimmer", name="WC")
+
+    resp = await _post(hass, {"rooms": [room]})
+
+    out = _body(resp)["rooms"][0]
+    assert out["created"] is False
+    assert out["matched_on"] == "installed_name"
+    assert out["renamed_by_resident"] is True
+    areas = ar.async_get(hass).async_list_areas()
+    assert [(a.id, a.name) for a in areas] == [("badezimmer", "WC")], "no second area"
+    assert dr.async_get(hass).async_get(dev.id).area_id == "badezimmer"
+
+
+async def test_the_first_sync_with_a_ref_adopts_the_renamed_room_and_records_the_ref(hass):
+    """The transition every installed flat goes through once the ref arrives."""
+    state = _seed(hass)
+    await _post(hass, {"rooms": [{"name": "Badezimmer"}]})
+    ar.async_get(hass).async_update("badezimmer", name="WC")
+
+    first = _body(await _post(hass, {"rooms": [
+        {"name": "Badezimmer", "ref": "room_3f2a", "kind": "badezimmer"}]}))["rooms"][0]
+    second = _body(await _post(hass, {"rooms": [
+        {"name": "Badezimmer", "ref": "room_3f2a", "kind": "badezimmer"}]}))["rooms"][0]
+
+    assert (first["created"], first["matched_on"]) == (False, "installed_name")
+    assert (second["created"], second["matched_on"]) == (False, "ref_alias")
+    area = ar.async_get(hass).async_get_area("badezimmer")
+    assert area.name == "WC", "the resident's name stays"
+    assert "room_3f2a" in area.aliases
+    assert "badezimmer" in area.labels
+    assert len(ar.async_get(hass).async_list_areas()) == 1
+    assert list(state[STATE_KEY]) == ["badezimmer"]
+
+
+async def test_two_installed_areas_for_one_name_are_refused_not_tripled(hass):
+    """A device that was already split (K55) must not grow a third area."""
+    _seed(hass, {"completed": False, STATE_KEY: {"badezimmer": "Badezimmer",
+                                                  "badezimmer_2": "Badezimmer"}})
+    reg = ar.async_get(hass)
+    # The two ids the split left behind, neither of them carrying the name now.
+    reg.async_create("Badezimmer")               # id `badezimmer`
+    reg.async_update("badezimmer", name="WC")
+    reg.async_create("Badezimmer")               # id taken -> `badezimmer_2`
+    reg.async_update("badezimmer_2", name="Bad 2")
+    assert {a.id for a in reg.async_list_areas()} == {"badezimmer", "badezimmer_2"}
+
+    resp = await _post(hass, {"rooms": [{"name": "Badezimmer"}]})
+
+    out = _body(resp)["rooms"][0]
+    assert out["ok"] is False and "ambiguous" in out["error"]
+    assert len(reg.async_list_areas()) == 2, "nothing created"
+
+
+async def test_an_installed_name_whose_area_is_gone_is_created_again(hass):
+    """Registry wiped, ref map survived: the record points at nothing, so the
+    room is simply built again — no error, no phantom adoption."""
+    _seed(hass, {"completed": False, STATE_KEY: {"badezimmer": "Badezimmer"}})
+    out = _body(await _post(hass, {"rooms": [{"name": "Badezimmer"}]}))["rooms"][0]
+    assert out["created"] is True
+    assert [a.id for a in ar.async_get(hass).async_list_areas()] == ["badezimmer"]
+
+
+async def test_after_a_factory_reset_the_rooms_come_back_under_their_refs(hass):
+    """A tenant wipe deletes the area registry AND this component's store. The
+    next sync rebuilds the flat from GACI: ids are the refs, names are the
+    installer's — the resident's renames are gone, by design."""
+    _seed(hass)
+    out = _body(await _post(hass, {"rooms": [
+        {"name": "Badezimmer", "ref": "room_3f2a", "kind": "badezimmer"},
+        {"name": "Schlafzimmer", "ref": "room_77e0", "kind": "schlafzimmer"}]}))["rooms"]
+    assert [r["created"] for r in out] == [True, True]
+    areas = {a.id: a.name for a in ar.async_get(hass).async_list_areas()}
+    assert areas == {"room_3f2a": "Badezimmer", "room_77e0": "Schlafzimmer"}

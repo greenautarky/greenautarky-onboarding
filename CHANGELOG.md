@@ -1,3 +1,25 @@
+## 2.12.4
+
+- **A room the resident renamed in Home Assistant is no longer duplicated by the
+  next rooms-sync (Odoo #1336).** Rooms installed by name only (every flat
+  installed before ga_manager 0.254.0, whose route dropped the room `ref`) were
+  matched by their CURRENT name. After a rename ("Badezimmer" -> "WC") the next
+  sync found neither the ref nor the name, created `badezimmer_2`, moved the
+  sensors into it and left the heating plan on the empty original. The sync now
+  falls back, after ref and current name, to the record this handler wrote
+  itself — `rooms_sync_installed_names` (area_id -> installed name) — adopts the
+  renamed area (`matched_on: "installed_name"`, `renamed_by_resident: true`),
+  keeps the resident's name and records the ref as an alias, so every later
+  sync matches on `ref_alias`. Two existing areas installed under one name (a
+  flat already split by the bug) are refused as ambiguous instead of growing a
+  third. After a factory reset (registry and store wiped) rooms come back under
+  their refs with the installer's names, by design. Tests: 5 new in
+  `tests/test_rooms_sync.py`, 3 red before the fix (rename duplicates, ref
+  transition duplicates, ambiguity creates a third area); full suite green
+  (336 passed). Proven end to end on the staging canary through the fleet-manager
+  and ga_manager 0.254.0: rename, sync, re-sync — no duplicate area, alias and
+  kind label recorded.
+
 ## 2.12.3
 
 - **The Ethernet step now records what the resident chose.** `consents.ethernet`
