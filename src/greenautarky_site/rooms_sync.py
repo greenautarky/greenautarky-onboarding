@@ -300,6 +300,41 @@ def _remember_ref(registry: ar.AreaRegistry, area, ref: str | None):
     return registry.async_update(area.id, aliases=set(area.aliases) | {ref})
 
 
+def _find_by_installed_name(registry: ar.AreaRegistry, installed: dict[str, str],
+                            name: str, claimed: set[str]):
+    """The area THIS handler installed under ``name``, when nothing else matched.
+
+    Reached only after the ref (id or alias) and the CURRENT name both missed.
+    That is exactly the room a resident renamed: Home Assistant kept its id, the
+    ref map below still says which name we installed it under, and nothing else
+    knows it any more. Without this the sync built a second area beside it —
+    seen on a field device (Odoo #1336): ``badezimmer`` renamed "WC",
+    ``badezimmer_2`` created, the sensors moved, the heating plan stranded.
+
+    This is not the name fallback ``_find_area`` dropped. It matches on a record
+    this handler wrote (``installed``: area_id -> the name it installed), not on
+    whatever text happens to be on an area now, so a room's identity still never
+    depends on what a resident typed.
+
+    Only areas that still exist and that no other room took in this request are
+    candidates. More than one is ambiguous — the trace a device already split by
+    the bug carries — and raises rather than guessing, because guessing is how
+    the split happened.
+    """
+    wanted = _norm(name)
+    hits = [registry.async_get_area(area_id) for area_id, installed_as in installed.items()
+            if _norm(installed_as) == wanted and area_id not in claimed]
+    hits = [a for a in hits if a is not None]
+    if len(hits) > 1:
+        _LOGGER.error("rooms-sync: %d installed areas were installed as %r: %s",
+                      len(hits), name, ", ".join(sorted(a.id for a in hits)))
+        raise ValueError(
+            f"{len(hits)} areas were installed under this room's name — ambiguous; "
+            "merge them by hand (Odoo #1336 runbook) before the next sync"
+        )
+    return hits[0] if hits else None
+
+
 def _rename(registry: ar.AreaRegistry, area, name: str):
     """Rename ``area`` to ``name``; keep the room when the name is taken.
 
@@ -579,6 +614,19 @@ class GARoomsSyncView(HomeAssistantView):
                         )
                         area = _remember_ref(area_reg, holder, ref)
                         created, matched_on = False, "adopted_name"
+                    elif (ours := _find_by_installed_name(
+                            area_reg, installed, name, claimed)) is not None:
+                        # The resident renamed a room this handler installed.
+                        # Keep their name (renamed_by_resident reports it
+                        # below) and write the ref down, so from the next sync
+                        # on the room is found by ref and this path is not
+                        # needed again.
+                        _LOGGER.info(
+                            "rooms-sync: area %s was installed under this room's "
+                            "name and has been renamed since — adopting it for "
+                            "ref %r instead of creating a duplicate", ours.id, ref)
+                        area = _remember_ref(area_reg, ours, ref)
+                        created, matched_on = False, "installed_name"
                     else:
                         # Seeded under a name that slugifies to the ref, then
                         # renamed.
