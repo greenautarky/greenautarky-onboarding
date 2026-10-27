@@ -33,7 +33,13 @@ _LOGGER = logging.getLogger(__name__)
 #   3. resolves the configured admin user
 #   4. issues a refresh_token + access_token via hass.auth
 #   5. returns an HTML page that plants `hassTokens` in localStorage
-#      and redirects to /
+#      and redirects to the token's `dest` (default "/")
+#
+# WHY `dest` EXISTS: "/" is the customer's view, and on a device whose
+# onboarding is not finished that is the onboarding wizard. An operator who
+# needs the admin area had no way past it. `dest` lets the fleet-manager say
+# where to land. It rides INSIDE the signed token, so it is covered by the HMAC
+# and cannot be rewritten by whoever holds the link.
 #
 # The shared secret is one fleet-wide HMAC key. It lives at
 # `/config/.storage/greenautarky_secrets/console_login_secret` (0600,
@@ -69,6 +75,12 @@ CONSOLE_LOGIN_ACCESS_TOKEN_TTL_S = 1800
 # cache module if we ever need multi-worker support — Core is currently
 # single-worker so a process-local set is sufficient.
 _SEEN_NONCES: dict[str, float] = {}
+
+# The destination validator lives in its own import-free module so it can be
+# tested without standing up Home Assistant - see console_dest.py. The default
+# is re-exported (F401) because callers and tests read it from here.
+from .console_dest import CONSOLE_LOGIN_DEFAULT_DEST  # noqa: E402,F401
+from .console_dest import safe_dest as _safe_dest  # noqa: E402
 
 
 def _migrate_legacy_console_secret() -> bool:
@@ -215,6 +227,9 @@ class GAConsoleLoginView(HomeAssistantView):
             payload = json.loads(token_bytes.decode("utf-8"))
             nonce = str(payload["nonce"])
             exp = float(payload["exp"])
+            # From the SIGNED payload, never the query string: the HMAC covers
+            # the token, a `?dest=` param would be attacker-controlled.
+            dest = _safe_dest(payload.get("dest"))
         except (ValueError, KeyError) as e:
             return web.Response(text=f"Malformed token: {e}", status=400)
 
@@ -297,7 +312,7 @@ class GAConsoleLoginView(HomeAssistantView):
 <script>
   try {{
     localStorage.setItem('hassTokens', JSON.stringify({json.dumps(ha_tokens)}));
-    window.location.replace('/');
+    window.location.replace({json.dumps(dest)});
   }} catch (e) {{
     document.body.innerText = 'localStorage write failed: ' + e.message;
   }}

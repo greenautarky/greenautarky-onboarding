@@ -1,3 +1,15 @@
+## 2.12.5
+
+- **The console login can land on a destination other than `/`.** After it plants a
+  session the page used to always go to `/`, which on a device with unfinished
+  onboarding is the wizard. The signed login token may now carry an optional
+  `dest`; it is read from the HMAC-covered payload only (never the query string)
+  and validated to a single-slash same-origin absolute path (`//host`, `/\host`,
+  schemes, relative paths, empty and control characters fall back to `/`). A token
+  without `dest` behaves exactly as before. Tests: `tests/test_console_login_dest.py`
+  (31, import-free validator in `console_dest.py`), red on the previous code,
+  green now.
+
 ## 2.12.4
 
 - **A room the resident renamed in Home Assistant is no longer duplicated by the
