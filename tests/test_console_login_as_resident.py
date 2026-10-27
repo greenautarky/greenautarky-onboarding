@@ -19,8 +19,8 @@ import pytest
 from homeassistant.auth.const import GROUP_ID_ADMIN, GROUP_ID_USER
 
 from greenautarky_site import console_as, console_login
-from greenautarky_site.const import DOMAIN
 from greenautarky_site.console_login import GAConsoleLoginView
+from greenautarky_site.const import DOMAIN
 
 SECRET = b"k" * 32
 

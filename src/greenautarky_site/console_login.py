@@ -79,9 +79,9 @@ _SEEN_NONCES: dict[str, float] = {}
 # The destination validator lives in its own import-free module so it can be
 # tested without standing up Home Assistant - see console_dest.py. The default
 # is re-exported (F401) because callers and tests read it from here.
+from .console_as import ACCOUNT_MARKER_KEY, parse_as, pick_resident  # noqa: E402
 from .console_dest import CONSOLE_LOGIN_DEFAULT_DEST  # noqa: E402,F401
 from .console_dest import safe_dest as _safe_dest  # noqa: E402
-from .console_as import ACCOUNT_MARKER_KEY, pick_resident, parse_as  # noqa: E402
 
 
 def _migrate_legacy_console_secret() -> bool:

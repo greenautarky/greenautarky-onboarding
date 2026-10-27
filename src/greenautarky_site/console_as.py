@@ -20,7 +20,8 @@ downgraded to a different session than the one it asked for.
 
 from __future__ import annotations
 
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
 
 AS_RESIDENT = "resident"
 ACCOUNT_MARKER_KEY = "onboarding_account_user_ids"

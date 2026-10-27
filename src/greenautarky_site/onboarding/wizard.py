@@ -28,9 +28,9 @@ from homeassistant.helpers.storage import Store
 
 from .. import dashboards
 from ..consent import async_record_consent
+from ..console_as import record_account
 from ..const import SITE_DEFAULT_LANGUAGE
 from ..household.dashboards_admin import _reconcile_dashboard_visibility
-from ..console_as import record_account
 from ..household.masters import _read_master_user_ids, _write_master_users
 from ..household.sub_users import _async_create_linked_person
 from ..locale_defaults import async_apply_resident_locale_defaults
