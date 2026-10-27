@@ -422,3 +422,18 @@ async def test_adopting_an_account_keeps_its_explicit_12h_clock(hass, hass_stora
     live, on_disk = await _stored_locale(hass, hass_storage, user.id)
     for got in (live, on_disk):
         assert got == {"language": "en", "time_format": "12", "date_format": "MDY"}, got
+
+
+@pytest.mark.asyncio
+async def test_the_account_step_records_which_account_it_created(hass) -> None:
+    """The console login's "as resident" signs in as the account recorded here;
+    a retry that adopts the same account must not record a second one."""
+    from greenautarky_site.console_as import ACCOUNT_MARKER_KEY
+
+    await _install_hass_auth_provider(hass)
+    st = _seed(hass)
+    await _post(hass, "rec@example.invalid", name="Rec")
+    await _post(hass, "rec@example.invalid", name="Rec")
+    ids = st[ACCOUNT_MARKER_KEY]
+    users = [u for u in hass.auth._store._users.values() if u.name == "Rec"]
+    assert len(users) == 1 and ids == [users[0].id]
