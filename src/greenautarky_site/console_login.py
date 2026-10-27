@@ -81,6 +81,7 @@ _SEEN_NONCES: dict[str, float] = {}
 # is re-exported (F401) because callers and tests read it from here.
 from .console_dest import CONSOLE_LOGIN_DEFAULT_DEST  # noqa: E402,F401
 from .console_dest import safe_dest as _safe_dest  # noqa: E402
+from .console_as import ACCOUNT_MARKER_KEY, pick_resident, parse_as  # noqa: E402
 
 
 def _migrate_legacy_console_secret() -> bool:
@@ -230,6 +231,9 @@ class GAConsoleLoginView(HomeAssistantView):
             # From the SIGNED payload, never the query string: the HMAC covers
             # the token, a `?dest=` param would be attacker-controlled.
             dest = _safe_dest(payload.get("dest"))
+            # Which account: absent = the service admin (as before); "resident"
+            # = the account the onboarding created; anything else is refused.
+            sign_in_as = parse_as(payload.get("as"))
         except (ValueError, KeyError) as e:
             return web.Response(text=f"Malformed token: {e}", status=400)
 
@@ -250,20 +254,32 @@ class GAConsoleLoginView(HomeAssistantView):
             return web.Response(text="Nonce already used.", status=409)
         _SEEN_NONCES[nonce] = now_ts
 
-        # Find the admin user. Strategy: configured user_id (DOMAIN data
-        # `console_login_user_id`); else the first ACTIVE owner with auth.
         target_user = None
-        configured_id = hass.data.get(DOMAIN, {}).get("console_login_user_id")
-        if configured_id:
-            target_user = await hass.auth.async_get_user(configured_id)
-        if target_user is None:
-            for u in await hass.auth.async_get_users():
-                if u.is_active and u.is_owner:
-                    target_user = u
-                    break
-        if target_user is None:
-            _LOGGER.error("console-login: no active owner user found on device")
-            return web.Response(text="No admin user to log in as.", status=500)
+        if sign_in_as == "resident":
+            # Exactly the account the onboarding recorded, or a refusal. No
+            # guessing and NEVER a fall back to the admin: this is the one
+            # branch where the wrong account would be silent.
+            state = (hass.data.get(DOMAIN) or {}).get("state") or {}
+            target_user, why = pick_resident(
+                state.get(ACCOUNT_MARKER_KEY), await hass.auth.async_get_users()
+            )
+            if target_user is None:
+                _LOGGER.warning("console-login: resident login refused: %s", why)
+                return web.Response(text=f"Resident login refused: {why}", status=409)
+        else:
+            # Find the admin user. Strategy: configured user_id (DOMAIN data
+            # `console_login_user_id`); else the first ACTIVE owner with auth.
+            configured_id = hass.data.get(DOMAIN, {}).get("console_login_user_id")
+            if configured_id:
+                target_user = await hass.auth.async_get_user(configured_id)
+            if target_user is None:
+                for u in await hass.auth.async_get_users():
+                    if u.is_active and u.is_owner:
+                        target_user = u
+                        break
+            if target_user is None:
+                _LOGGER.error("console-login: no active owner user found on device")
+                return web.Response(text="No admin user to log in as.", status=500)
 
         # Issue refresh_token + access_token. client_id must look like a URL
         # per HA's RFC8252 validation; the value is informational.

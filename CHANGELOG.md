@@ -1,3 +1,21 @@
+## 2.12.6
+
+- **The console login can sign in as the resident.** The signed login token may now
+  carry `as: "resident"`; the session is then minted for the account the GA
+  onboarding itself created, so an operator sees what the resident sees.
+  The account is identified by a new record written by the account step
+  (`onboarding_account_user_ids` in the onboarding state; an adopted account is
+  recorded once, a retry adds nothing). Exactly one recorded account that still
+  exists, is active and is not a system user is signed in; none or several is
+  refused with a message (HTTP 409), never a guess and never a fall back to the
+  admin. An unknown `as` value is refused (HTTP 400). `as` is read from the
+  HMAC-covered payload only. A token without `as` behaves exactly as before.
+  A device onboarded before this release has no record and refuses until its
+  onboarding is run again. Tests: `tests/test_console_login_as_resident.py`
+  (16) and one in `tests/test_onboarding_account_step.py`; red against code that
+  ignores `as` (12 fail) and against code that picks one of several (2 fail),
+  green now, full suite green.
+
 ## 2.12.5
 
 - **The console login can land on a destination other than `/`.** After it plants a

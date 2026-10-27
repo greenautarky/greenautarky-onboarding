@@ -30,6 +30,7 @@ from .. import dashboards
 from ..consent import async_record_consent
 from ..const import SITE_DEFAULT_LANGUAGE
 from ..household.dashboards_admin import _reconcile_dashboard_visibility
+from ..console_as import record_account
 from ..household.masters import _read_master_user_ids, _write_master_users
 from ..household.sub_users import _async_create_linked_person
 from ..locale_defaults import async_apply_resident_locale_defaults
@@ -717,6 +718,9 @@ class GAOnboardingCreateUserView(HomeAssistantView):
         # Mark account step as done
         state = _get_state(hass)
         store = _get_store(hass)
+        # Record WHICH account the onboarding created (or adopted): the console
+        # login's "as resident" signs in as this account and nothing else.
+        record_account(state, user.id)
         if "account" not in state.get("steps_done", []):
             state.setdefault("steps_done", []).append("account")
 
