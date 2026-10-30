@@ -25,6 +25,7 @@ ORIGIN = "http://ga-device.test"
 SCRIPT = (pathlib.Path(__file__).resolve().parents[2]
           / "src/greenautarky_site/frontend_bundle/ga-onboarding-redirect.js").read_text()
 PAGE = '<!DOCTYPE html><html><body><p id="ha">HA admin</p><script src="/redirect.js"></script></body></html>'
+BLANK = '<!DOCTYPE html><html><body>blank</body></html>'
 SETUP = '<!DOCTYPE html><html><body><p id="setup">wizard</p></body></html>'
 
 
@@ -39,6 +40,8 @@ async def _land(marker_age_ms: int | None, completed: bool) -> str:
                 await r.fulfill(body=SCRIPT, content_type="application/javascript")
             elif "/api/greenautarky_site/status" in url:
                 await r.fulfill(body=json.dumps({"completed": completed}), content_type="application/json")
+            elif url.endswith("/blank"):
+                await r.fulfill(body=BLANK, content_type="text/html")
             elif "/greenautarky-setup.html" in url:
                 await r.fulfill(body=SETUP, content_type="text/html")
             else:
