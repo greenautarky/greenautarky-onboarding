@@ -164,3 +164,36 @@ def test_record_account_is_idempotent_and_survives_a_bad_value():
     console_as.record_account(st, "a")
     console_as.record_account(st, "a")
     assert st[console_as.ACCOUNT_MARKER_KEY] == ["a"]
+
+
+# ── operator session marker (2026-10-30) ───────────────────────────────────
+# An admin login from the fleet-manager must never be trapped by the resident's
+# onboarding wizard; ga-onboarding-redirect.js skips while this marker is fresh.
+# On K31 (fresh flash, wizard open) the "Admin" button landed on the setup page.
+
+
+@pytest.mark.asyncio
+async def test_admin_login_marks_an_operator_session(hass):
+    await _world(hass)
+    resp = await GAConsoleLoginView().get(_Req(hass, _signed()))
+    assert resp.status == 200
+    assert "localStorage.setItem('ga_operator_session'" in resp.text
+    assert "removeItem('ga_operator_session')" not in resp.text
+
+
+@pytest.mark.asyncio
+async def test_resident_login_clears_the_operator_marker(hass):
+    """The test-user view must stay exactly what the resident sees."""
+    await _world(hass)
+    resp = await GAConsoleLoginView().get(_Req(hass, _signed(**{"as": "resident"})))
+    assert resp.status == 200
+    assert "localStorage.removeItem('ga_operator_session')" in resp.text
+    assert "setItem('ga_operator_session'" not in resp.text
+
+
+@pytest.mark.asyncio
+async def test_marker_is_set_before_the_redirect(hass):
+    """Order matters: the redirect script runs on the next page; the marker must exist by then."""
+    await _world(hass)
+    html = (await GAConsoleLoginView().get(_Req(hass, _signed()))).text
+    assert html.index("ga_operator_session") < html.index("window.location.replace")
