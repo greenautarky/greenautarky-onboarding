@@ -319,6 +319,20 @@ class GAConsoleLoginView(HomeAssistantView):
             "ha_auth_provider": "homeassistant",
         }
 
+        # Operator session marker (Thomas, 2026-10-30): an ADMIN login from the
+        # fleet-manager must never be trapped by the resident's onboarding
+        # wizard — ga-onboarding-redirect.js skips its redirect while this
+        # marker is fresh. The test-user ("resident") login clears it, so that
+        # view stays exactly what the resident sees. Only this signed,
+        # single-use view writes it.
+        if sign_in_as == "resident":
+            operator_js = "localStorage.removeItem('ga_operator_session');"
+        else:
+            operator_js = (
+                "localStorage.setItem('ga_operator_session', "
+                "JSON.stringify({at: Date.now()}));"
+            )
+
         # Inline HTML that plants the tokens and redirects.
         html = f"""<!DOCTYPE html>
 <html>
@@ -328,6 +342,7 @@ class GAConsoleLoginView(HomeAssistantView):
 <script>
   try {{
     localStorage.setItem('hassTokens', JSON.stringify({json.dumps(ha_tokens)}));
+    {operator_js}
     window.location.replace({json.dumps(dest)});
   }} catch (e) {{
     document.body.innerText = 'localStorage write failed: ' + e.message;

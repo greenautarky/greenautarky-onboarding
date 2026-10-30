@@ -1,3 +1,12 @@
+## 2.12.7
+
+- **An admin login from the fleet-manager is never trapped by the open onboarding wizard.**
+  `/api/ga_remote_login` (admin) writes a browser marker `ga_operator_session` before its
+  redirect; `ga-onboarding-redirect.js` skips the wizard redirect while the marker is younger
+  than 12 h. The test-user (`as: resident`) login clears it, so that view stays what the
+  resident sees. Found on the staging canary after a clean flash (2026-10-30): "Admin" landed on
+  the setup page. Tests: 3 unit + 4 browser (red before, green after).
+
 ## 2.12.6
 
 - **The console login can sign in as the resident.** The signed login token may now

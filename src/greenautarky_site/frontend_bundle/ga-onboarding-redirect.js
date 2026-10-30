@@ -17,6 +17,7 @@
  */
 (async () => {
   "use strict";
+  const OPERATOR_SESSION_MS = 12 * 60 * 60 * 1000;
 
   // The wizard is a standalone static page, not the HA SPA, so this
   // module is never loaded there — but guard defensively anyway.
@@ -24,6 +25,18 @@
     return;
   }
 
+  // An admin who came in through the fleet-manager's one-click login is an
+  // operator, not the resident: never send them to the wizard. The marker is
+  // written only by /api/ga_remote_login (admin) and expires after 12 h.
+  try {
+    const raw = window.localStorage.getItem("ga_operator_session");
+    const at = raw ? JSON.parse(raw).at : 0;
+    if (typeof at === "number" && Date.now() - at >= 0 && Date.now() - at < OPERATOR_SESSION_MS) {
+      return;
+    }
+  } catch (err) {
+    // unreadable marker → behave as before
+  }
   try {
     const resp = await fetch("/api/greenautarky_site/status", {
       headers: { Accept: "application/json" },
