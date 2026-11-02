@@ -1,3 +1,17 @@
+## 2.12.9
+
+- **A resident is never offered the Zigbee coordinator's "Permit join" switch.**
+  zigbee2mqtt publishes the bridge's `permit_join` as a primary switch, and the home model
+  reads a device's role from what it exposes, so the coordinator counted as a plug. A
+  house-wide user then found "Zigbee2MQTT Bridge Permit join" on the flat overview that is
+  shown while no device is placed in a room — right after the setup wizard — and could open
+  the Zigbee network for pairing. The bridge (identified by zigbee2mqtt's own
+  `zigbee2mqtt_bridge_<ieee>` device identifier, not by its name) now has the role
+  `infrastructure`, which offers no controls, roomless or in a room. Its entities stay in
+  Home Assistant unchanged, so an installer still pairs devices with it.
+  Tests: 2 red before, green after; plug and thermostat must-pass; removing the rule turns
+  them red again. Odoo #1479.
+
 ## 2.12.8
 
 - **The setup wizard refuses a device without a PIN file instead of opening every step.**
