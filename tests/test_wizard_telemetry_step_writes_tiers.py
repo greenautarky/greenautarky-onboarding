@@ -28,8 +28,13 @@ import sys
 import types
 from typing import Any
 
+import pytest
+
 from greenautarky_site.const import DOMAIN
 from greenautarky_site.onboarding.wizard import GAOnboardingTelemetryView
+
+# The PIN is not the subject of this file (fail-closed gate since 2.12.8).
+pytestmark = pytest.mark.usefixtures("pin_not_under_test")
 
 TELEMETRY = "greenautarky_telemetry"
 

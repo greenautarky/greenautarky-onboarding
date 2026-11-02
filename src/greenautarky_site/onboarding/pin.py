@@ -94,13 +94,24 @@ def _pin_required(hass: HomeAssistant) -> bool:
 
 
 def _check_pin_verified(hass: HomeAssistant) -> web.Response | None:
-    """Return 403 if PIN is required but not yet verified.
+    """Return 403 unless the sticker PIN has been verified.
 
-    Called by GDPR, create_user, and other endpoints to gate access
-    until physical access is proven.
+    Fails CLOSED: a device without a PIN file is not provisioned yet, so the
+    wizard refuses instead of opening every gated step. Until 2.12.7 a missing
+    file meant "no verification needed" (found in the 2026-11-02 security
+    review). Every provisioned device carries the file (flasher / fleet-manager
+    identity write) and a tenant wipe keeps it.
     """
     if not _pin_required(hass):
-        return None  # No PIN file — no verification needed
+        _LOGGER.warning("onboarding step refused: no PIN file on this device (not provisioned)")
+        return web.json_response(
+            {
+                "error": "PIN not provisioned",
+                "code": "pin_not_provisioned",
+                "message": "This device has not been set up yet. Please contact your installer.",
+            },
+            status=403,
+        )
     state = _get_state(hass)
     if state.get("pin_verified"):
         return None  # Already verified

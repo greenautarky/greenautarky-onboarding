@@ -19,6 +19,9 @@ from greenautarky_site.onboarding import pin as pin_module
 from greenautarky_site.onboarding import wizard as wizard_module
 from greenautarky_site.onboarding.wizard import GAOnboardingEthernetView
 
+# The PIN is not the subject of this file (fail-closed gate since 2.12.8).
+pytestmark = pytest.mark.usefixtures("pin_not_under_test")
+
 
 class _FakeStore:
     async def async_save(self, data: dict[str, Any]) -> None:
