@@ -18,6 +18,9 @@ from greenautarky_site.const import DOMAIN
 from greenautarky_site.onboarding import pin as pin_module
 from greenautarky_site.onboarding.wizard import GAOnboardingCompleteView
 
+# The PIN is not the subject of this file (fail-closed gate since 2.12.8).
+pytestmark = pytest.mark.usefixtures("pin_not_under_test")
+
 
 class _FakeStore:
     def __init__(self) -> None:

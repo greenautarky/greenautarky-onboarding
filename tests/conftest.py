@@ -63,3 +63,18 @@ def integration_root() -> Path:
     Useful for tests that read the .html / .json files directly.
     """
     return Path(__file__).resolve().parent.parent / "src" / "greenautarky_site"
+
+
+@pytest.fixture
+def pin_not_under_test(monkeypatch):
+    """Let wizard steps pass the PIN gate in tests whose subject is NOT the PIN.
+
+    Until 2.12.7 a missing PIN file meant "no gate", and the harness has no PIN
+    file — so every wizard test ran with the gate silently open. Since 2.12.8 the
+    gate fails closed; tests about the account, ethernet or telemetry steps opt in
+    here explicitly instead. The PIN gate itself is tested WITHOUT this fixture
+    (test_pin_gate_fails_closed.py, test_wizard_steps_are_gated_by_the_pin.py).
+    """
+    from greenautarky_site.onboarding import wizard as wizard_module
+
+    monkeypatch.setattr(wizard_module, "_check_pin_verified", lambda _hass: None)

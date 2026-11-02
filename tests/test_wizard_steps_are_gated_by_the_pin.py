@@ -102,9 +102,9 @@ async def test_complete_still_works_once_the_pin_is_verified(hass, monkeypatch):
     assert "complete" in st["steps_done"]
 
 
-async def test_no_pin_file_means_no_gate(hass, monkeypatch):
-    """A device without a PIN file (pre-1.0 images, some benches) keeps working:
-    the gate is the PIN's, not an extra login."""
+async def test_no_pin_file_refuses_instead_of_opening_the_gate(hass, monkeypatch):
+    """A device without a PIN file is not provisioned; it must not open every step.
+    (Until 2.12.7 a missing file meant "no gate" — see test_pin_gate_fails_closed.py.)"""
     monkeypatch.setattr(pin_module, "_pin_required", lambda _hass: False)
     from homeassistant.components.frontend import DATA_PANELS
 
@@ -116,5 +116,5 @@ async def test_no_pin_file_means_no_gate(hass, monkeypatch):
 
     resp = await GAOnboardingCompleteView().post(_FakeRequest(hass, {}))
 
-    assert resp.status == 200
-    assert st["completed"] is True
+    assert resp.status == 403
+    assert st["completed"] is False

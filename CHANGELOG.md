@@ -1,3 +1,16 @@
+## 2.12.8
+
+- **The setup wizard refuses a device without a PIN file instead of opening every step.**
+  Until 2.12.7 a missing sticker-PIN file meant "no verification needed", so the account,
+  GDPR, telemetry, ethernet and complete steps ran without any proof of physical access.
+  The gate now fails closed: without the file every gated step answers 403
+  (`code: pin_not_provisioned`, "This device has not been set up yet. Please contact your
+  installer."). The status endpoint always reports `pin_required: true` (plus the new
+  `pin_provisioned`), so the wizard shows the PIN page instead of skipping it and failing one
+  step later. Every provisioned device carries the PIN, and a tenant wipe keeps it.
+  Tests: 6 red before, green after; tests whose subject is not the PIN now opt out of the gate explicitly
+  (`pin_not_under_test`) instead of relying on the missing file. Odoo #1440.
+
 ## 2.12.7
 
 - **An admin login from the fleet-manager is never trapped by the open onboarding wizard.**

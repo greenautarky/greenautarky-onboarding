@@ -28,7 +28,8 @@ from greenautarky_site.household import (
 )
 from greenautarky_site.onboarding import GAOnboardingCreateUserView
 
-pytestmark = pytest.mark.asyncio
+# The PIN is not the subject of this file (fail-closed gate since 2.12.8).
+pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("pin_not_under_test")]
 
 
 @pytest.fixture(autouse=True)

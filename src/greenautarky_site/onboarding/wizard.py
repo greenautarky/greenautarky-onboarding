@@ -295,7 +295,12 @@ class GAOnboardingStatusView(HomeAssistantView):
             response["completed"] = True
 
         # Add PIN status fields
-        response["pin_required"] = _pin_required(hass)
+        # The PIN step is always required: a device without a PIN file is not
+        # provisioned, and the gate refuses it (fail closed, 2.12.8). Reporting
+        # pin_required=False there made the wizard skip the PIN page and hit the
+        # refusal one step later with nothing to enter.
+        response["pin_required"] = True
+        response["pin_provisioned"] = _pin_required(hass)
         response["pin_verified"] = state.get("pin_verified", False)
         locked_until = state.get("pin_locked_until")
         if locked_until:
