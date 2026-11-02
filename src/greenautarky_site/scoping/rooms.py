@@ -288,7 +288,29 @@ def _build_home_model(
         "light": frozenset({"light"}),
         # A plug is a switch and nothing else.
         "switch": frozenset({"switch"}),
+        # The Zigbee coordinator runs the network the household's devices live
+        # on; it is not one of them. zigbee2mqtt publishes its `permit_join` as
+        # a primary switch, so read by capability it looked like a plug and a
+        # resident was offered "open the Zigbee network for pairing" on the
+        # overview (bench device, 2026-11-02, #1479). It keeps every entity in
+        # Home Assistant — the installer pairs with exactly that switch — and
+        # offers a resident nothing.
+        "infrastructure": frozenset(),
     }
+
+    def _is_infrastructure(device_id: str) -> bool:
+        """Is this the zigbee2mqtt bridge device?
+
+        Keyed on the identifier zigbee2mqtt gives its bridge —
+        `zigbee2mqtt_bridge_<coordinator IEEE>` under the `mqtt` domain, the same
+        in 1.x and 2.x and independent of the base topic — not on its name,
+        which a person can change.
+        """
+        dev = dev_reg.async_get(device_id)
+        return bool(dev) and any(
+            domain == "mqtt" and ident.startswith("zigbee2mqtt_bridge_")
+            for domain, ident in dev.identifiers
+        )
 
     def _device_role(device_id: str | None) -> str | None:
         """What kind of thing this device IS, from what it exposes.
@@ -298,6 +320,8 @@ def _build_home_model(
         """
         if not device_id:
             return None
+        if _is_infrastructure(device_id):
+            return "infrastructure"
         domains = {
             e.entity_id.split(".", 1)[0]
             for e in ent_reg.entities.values()
