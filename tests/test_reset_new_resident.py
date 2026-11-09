@@ -154,17 +154,56 @@ async def test_reset_on_a_device_without_telemetry_still_works(hass, monkeypatch
     assert st["completed"] is False and st["pin_verified"] is False
 
 
-async def test_an_old_telemetry_component_is_reset_loudly(hass, monkeypatch, caplog):
+async def test_an_old_telemetry_component_is_a_loud_error_and_changes_nothing(
+    hass, monkeypatch, caplog
+):
+    """Component older than 0.2.4: no entry point, so the previous resident's Tier 2
+    opt-in cannot be reset. That is an HTTP error with a code, never ``ok``."""
     monkeypatch.delitem(sys.modules, f"custom_components.{TELEMETRY}", raising=False)
     monkeypatch.delitem(sys.modules, TELEMETRY, raising=False)
-    _previous_resident(hass)
+    st = _previous_resident(hass)
+    hass.data[TELEMETRY]["preferences"]["metrics"] = True
+    before_prefs = json.dumps(hass.data[TELEMETRY]["preferences"], sort_keys=True)
+    before_state = json.dumps(st, sort_keys=True)
 
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.ERROR):
         resp = await GAOnboardingResetView().post(_FakeRequest(hass, user=_User(True)))
 
-    assert resp.status == 200
-    assert json.loads(resp.body)["telemetry_reset"] == "legacy"
+    assert resp.status == 500
+    body = json.loads(resp.body)
+    assert body["code"] == "telemetry_component_outdated"
+    assert "older than 0.2.4" in body["message"] and "updated" in body["message"]
+    assert "telemetry_reset" not in body
+    assert json.dumps(hass.data[TELEMETRY]["preferences"], sort_keys=True) == before_prefs
+    assert json.dumps(st, sort_keys=True) == before_state, "the wizard state changed"
     assert any("older than 0.2.4" in r.message for r in caplog.records)
+
+
+async def test_a_failed_state_save_after_a_telemetry_reset_is_a_500_and_a_retry_works(
+    hass, monkeypatch
+):
+    """What holds: telemetry reset, 500 returned, retry idempotent."""
+    _install_telemetry(monkeypatch)
+    st = _previous_resident(hass)
+    store = hass.data[DOMAIN]["store"]
+
+    async def failing_save(data):
+        raise OSError("disk full")
+
+    ok_save = store.async_save
+    store.async_save = failing_save
+
+    resp = await GAOnboardingResetView().post(_FakeRequest(hass, user=_User(True)))
+
+    assert resp.status == 500
+    assert json.loads(resp.body)["code"] == "state_save_failed"
+    assert hass.data[TELEMETRY]["preferences"]["tiers"]["tier2"]["value"] is False
+
+    store.async_save = ok_save
+    again = await GAOnboardingResetView().post(_FakeRequest(hass, user=_User(True)))
+    assert again.status == 200
+    assert hass.data[TELEMETRY]["preferences"]["tiers"]["tier2"]["value"] is False
+    assert st["completed"] is False
 
 
 async def test_a_telemetry_failure_fails_the_reset_and_changes_nothing(hass, monkeypatch):

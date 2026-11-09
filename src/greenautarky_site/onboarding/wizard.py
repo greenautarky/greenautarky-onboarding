@@ -177,6 +177,84 @@ async def _async_recorded_account_hint(hass: HomeAssistant, state: dict) -> str 
     return None
 
 
+#: The user id THIS run's account step created itself (never an adopted one).
+#: Replacement deletes this id and no other; a reset clears it.
+RUN_ACCOUNT_KEY = "onboarding_run_account_id"
+
+
+async def _async_replaceable_run_account(hass: HomeAssistant, state: dict):
+    """The user a PIN-verified resident may replace, else None.
+
+    Replacement (Odoo #1695, decided 2026-11-09): before ``complete`` no data
+    hangs on the account, and the PIN proves physical access, so a resident who
+    verified the PIN in THIS run may swap the not-yet-completed account for a
+    new one. Every condition below is a hard stop, because the action deletes a
+    user:
+
+    * the run is PIN-verified and the device HAS a PIN (``_pin_required``): on a
+      device without one nobody can have proven anything, so nothing is
+      replaceable there (the gate refuses such a device anyway);
+    * not completed, and ``account`` is in ``steps_done`` (this run made one);
+    * the id is the one this run's account step CREATED and recorded
+      (:data:`RUN_ACCOUNT_KEY`) and is also in the account marker list - an
+      adopted account, or any id the wizard did not create, is never deleted;
+    * the user still exists, is active, and is not an owner, admin or system
+      user.
+    """
+    if state.get("completed") or state.get("pin_verified") is not True:
+        return None
+    if not _pin_required(hass):
+        return None
+    if "account" not in state.get("steps_done", []):
+        return None
+    uid = state.get(RUN_ACCOUNT_KEY)
+    marked = state.get(ACCOUNT_MARKER_KEY)
+    if not isinstance(uid, str) or not isinstance(marked, list) or uid not in marked:
+        return None
+    user = await hass.auth.async_get_user(uid)
+    if user is None or not user.is_active or user.system_generated:
+        return None
+    if user.is_owner or user.is_admin:
+        return None
+    return user
+
+
+async def _async_delete_run_account(hass: HomeAssistant, provider, state: dict, user) -> None:
+    """Delete the run's account and everything the account step attached to it.
+
+    The user, its login credential(s), its Person, its personal dashboard, a
+    main-user flag it holds, and its bookkeeping. ``account`` leaves
+    ``steps_done`` so a failure while creating the replacement can never leave
+    a wizard that looks set up and has nobody who can log in (the guard on
+    ``complete`` then refuses, and the step can simply be retried).
+    """
+    from ..household.sub_users import _async_delete_linked_person
+
+    for cred in list(user.credentials):
+        if cred.auth_provider_type == "homeassistant":
+            try:
+                await provider.async_remove_auth(str(cred.data.get("username", "")))
+            except Exception:
+                _LOGGER.exception("onboarding: could not remove the credential of the replaced account")
+    await _async_delete_linked_person(hass, user.id)
+    await dashboards.async_delete_personal_dashboard(hass, state, user.id)
+    try:
+        masters = await hass.async_add_executor_job(_read_master_user_ids, hass)
+        if user.id in masters:
+            await hass.async_add_executor_job(_write_master_users, hass, masters - {user.id})
+    except Exception as err:
+        _LOGGER.warning("onboarding: could not clear the main-user flag of the replaced account: %s", err)
+    await hass.auth.async_remove_user(user)
+
+    marked = state.get(ACCOUNT_MARKER_KEY)
+    if isinstance(marked, list) and user.id in marked:
+        marked.remove(user.id)
+    state.pop(RUN_ACCOUNT_KEY, None)
+    state["steps_done"] = [s for s in state.get("steps_done", []) if s != "account"]
+    await _get_store(hass).async_save(state)
+    _LOGGER.warning("onboarding: the not-yet-completed account of this run was replaced on request")
+
+
 def _check_account_exists(hass: HomeAssistant) -> web.Response | None:
     """Return a 409 if no resident account has been created yet.
 
@@ -483,31 +561,31 @@ async def _async_reset_telemetry_preferences(hass: HomeAssistant) -> str:
     """Put the telemetry preferences back to the wizard's starting defaults.
 
     Returns ``"absent"`` (no telemetry component on this device, nothing to
-    reset), ``"reset"`` (through the component's own entry point) or
-    ``"legacy"`` (component older than 0.2.4: flat keys only, said loudly).
+    reset) or ``"reset"`` (through the component's own entry point). A component
+    older than 0.2.4 has no entry point; it raises :class:`TelemetryTooOld`
+    WITHOUT changing anything: the flat-key write used to run here, reported
+    ``"legacy"`` and left the previous resident's Tier 2 opt-in active.
 
     Limit: the component's setter records a DECISION, so the tiers return to the
     defaults but carry a fresh ``accepted_at`` / ``policy_version`` instead of
     the never-onboarded record (``policy_version_accepted: None``). Writing that
     exact record needs an entry point in greenautarky_telemetry that does not
-    exist yet; the values the OS gate reads are right either way.
+    exist yet; the values the OS gate reads are right either way, and the
+    wizard's telemetry step is neither skipped nor pre-answered by the stamp
+    (the step order is fixed and the toggles start from the defaults).
     """
     telemetry_data = hass.data.get("greenautarky_telemetry")
     if not telemetry_data:
         return "absent"
     setter = _telemetry_set_preferences()
-    if setter is not None:
-        await setter(hass, **_TELEMETRY_WIZARD_DEFAULTS)
-        return "reset"
-    _LOGGER.warning(
-        "onboarding reset: greenautarky_telemetry has no async_set_preferences "
-        "(component older than 0.2.4) - resetting the legacy flat keys only; the "
-        "tier record keeps the previous resident's values"
-    )
-    prefs = telemetry_data["preferences"]
-    prefs.update(_TELEMETRY_WIZARD_DEFAULTS)
-    await telemetry_data["store"].async_save(prefs)
-    return "legacy"
+    if setter is None:
+        raise TelemetryTooOld
+    await setter(hass, **_TELEMETRY_WIZARD_DEFAULTS)
+    return "reset"
+
+
+class TelemetryTooOld(Exception):
+    """greenautarky_telemetry is older than 0.2.4 (no ``async_set_preferences``)."""
 
 
 class GAOnboardingTelemetryView(HomeAssistantView):
@@ -742,6 +820,7 @@ class GAOnboardingCreateUserView(HomeAssistantView):
         # So: ask before creating, and if the credential already belongs to
         # someone, ADOPT that user instead of failing. Onboarding is a flow a
         # person walks once; it has to survive being walked twice.
+        created_here = False
         state, existing_user, credentials = await _async_account_state(hass, provider, username)
         if state == "absent":
             # A SECOND ADDRESS FOR THE SAME RUN. This run already created its
@@ -754,6 +833,14 @@ class GAOnboardingCreateUserView(HomeAssistantView):
             # address (+ password) is adopted below, as before.
             hint = await _async_recorded_account_hint(hass, _get_state(hass))
             if hint is not None:
+                run_state = _get_state(hass)
+                replaceable = await _async_replaceable_run_account(hass, run_state)
+                if body.get("replace_account") is True and replaceable is not None:
+                    # Explicit request from a PIN-verified run (see
+                    # _async_replaceable_run_account): the old account goes.
+                    await _async_delete_run_account(hass, provider, run_state, replaceable)
+                    hint = None
+            if hint is not None:
                 _LOGGER.warning(
                     "onboarding: an account was already created in this run (%s); "
                     "refusing a second one for another address", hint,
@@ -762,6 +849,8 @@ class GAOnboardingCreateUserView(HomeAssistantView):
                     {
                         "code": "account_exists",
                         "hint": hint,
+                        # The page offers "replace" only when this is true.
+                        "replaceable": replaceable is not None,
                         "message": (
                             "An account was already created on this device "
                             f"({hint}). Sign in with that address; a second "
@@ -823,6 +912,7 @@ class GAOnboardingCreateUserView(HomeAssistantView):
                 user, credentials = await asyncio.shield(
                     _async_create_account(hass, provider, name, username, password)
                 )
+                created_here = True
             except asyncio.CancelledError:
                 raise  # the shielded creation still finishes; a retry adopts it
             except Exception:
@@ -872,6 +962,9 @@ class GAOnboardingCreateUserView(HomeAssistantView):
         # Record WHICH account the onboarding created (or adopted): the console
         # login's "as resident" signs in as this account and nothing else.
         record_account(state, user.id)
+        if created_here:
+            # Only an account THIS call created is ever replaceable.
+            state[RUN_ACCOUNT_KEY] = user.id
         if "account" not in state.get("steps_done", []):
             state.setdefault("steps_done", []).append("account")
 
@@ -941,18 +1034,38 @@ class GAOnboardingResetView(HomeAssistantView):
         state = _get_state(hass)
         store = _get_store(hass)
 
-        # The telemetry preferences first: if that cannot be done, nothing else
-        # has changed yet and the caller can simply retry. A reset that left
-        # the previous resident's opt-in running while reporting success would
-        # be the defect this endpoint now exists to prevent.
+        # The telemetry preferences first. What holds: a telemetry failure
+        # changes nothing (the wizard state is untouched, the caller can retry).
+        # A failure saving the wizard state AFTER a successful telemetry reset
+        # leaves telemetry reset and returns 500; retry is idempotent. A reset
+        # that left the previous resident's opt-in running while reporting
+        # success would be the defect this endpoint now exists to prevent.
         try:
             telemetry_reset = await _async_reset_telemetry_preferences(hass)
+        except TelemetryTooOld:
+            _LOGGER.error(
+                "onboarding reset refused: greenautarky_telemetry is older than 0.2.4 "
+                "and cannot be reset; update the component. Nothing was changed."
+            )
+            return web.json_response(
+                {
+                    "status": "error",
+                    "code": "telemetry_component_outdated",
+                    "message": (
+                        "Telemetry could not be reset: the greenautarky_telemetry "
+                        "component is older than 0.2.4 and must be updated. "
+                        "Nothing was changed."
+                    ),
+                },
+                status=500,
+            )
         except Exception:
             _LOGGER.exception("onboarding reset: telemetry preferences could not be reset")
             return web.json_response(
                 {
                     "status": "error",
-                    "message": "Telemetry preferences could not be reset; nothing was reset.",
+                    "code": "telemetry_reset_failed",
+                    "message": "Telemetry preferences could not be reset; nothing was changed.",
                 },
                 status=500,
             )
@@ -963,7 +1076,24 @@ class GAOnboardingResetView(HomeAssistantView):
         state["steps_done"] = []
         state["consents"] = {}
         state["pin_verified"] = False
-        await store.async_save(state)
+        state.pop(RUN_ACCOUNT_KEY, None)
+        try:
+            await store.async_save(state)
+        except Exception:
+            _LOGGER.exception(
+                "onboarding reset: telemetry was reset but the wizard state could not be saved"
+            )
+            return web.json_response(
+                {
+                    "status": "error",
+                    "code": "state_save_failed",
+                    "message": (
+                        "Telemetry was reset, but the wizard state could not be "
+                        "saved. Retry the reset; it is idempotent."
+                    ),
+                },
+                status=500,
+            )
 
         # Re-register the sidebar panel if it was removed on completion.
         # Skip if already registered (e.g. onboarding was never completed).

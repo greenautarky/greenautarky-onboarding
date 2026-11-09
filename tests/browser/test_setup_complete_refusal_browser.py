@@ -194,3 +194,99 @@ async def test_back_after_the_recovery_clears_the_notice_and_the_recovery_flag()
     assert out["ethernet_visible_after"], f"Back did not return to the last step: {out}"
     assert out["notice_count_after"] == 0, f"the stale notice survived Back: {out}"
     assert out["recovery_after"] is False, f"the recovery flag survived Back: {out}"
+
+
+# --- Review round 3: replace the not-yet-completed account (Odoo #1695) -------
+
+DE_REPLACE_WARNING = ("Achtung: Wenn du ein neues Konto anlegst, wird der bisherige Eintrag "
+                      "(r***@example.invalid) verworfen und gelöscht. Das ist nur möglich, "
+                      "solange die Einrichtung nicht abgeschlossen ist.")
+
+
+async def _run_account(first_answer: dict, *, click_replace: bool):
+    """Drive the account step: fill the form, submit, optionally press 'Konto ersetzen'."""
+    posts: list[dict] = []
+    async with playwright_async.async_playwright() as pw:
+        browser = await pw.chromium.launch()
+        page = await browser.new_page()
+
+        async def route(r):
+            url = r.request.url
+            path = url.replace(ORIGIN, "").split("?")[0]
+            if path.startswith("/api/greenautarky_site/"):
+                name = path.rsplit("/", 1)[-1]
+                if name == "create_user":
+                    posts.append(json.loads(r.request.post_data or "{}"))
+                    # first POST: the refusal under test; any later POST: a 400 so the
+                    # page stays on the step (the auth hand-off is not under test here).
+                    answer = first_answer if len(posts) == 1 else _json(400, {"message": "stop"})
+                    await r.fulfill(**answer)
+                elif name == "status":
+                    await r.fulfill(**_json(200, {"completed": False, "gdpr_accepted": False,
+                                                  "steps_done": [], "pin_required": False}))
+                else:
+                    await r.fulfill(**_json(200, {"status": "ok"}))
+            elif path == "/greenautarky-setup.html":
+                await r.fulfill(body=(BUNDLE / "greenautarky-setup.html").read_text(),
+                                content_type="text/html")
+            elif path.startswith(STATIC):
+                f = BUNDLE / path[len(STATIC):]
+                if f.is_file():
+                    await r.fulfill(body=f.read_bytes(), content_type="application/javascript")
+                else:
+                    await r.fulfill(status=404, body="")
+            else:
+                await r.fulfill(status=404, body="")
+
+        await page.route("**/*", route)
+        await page.goto(f"{ORIGIN}/greenautarky-setup.html")
+        await page.wait_for_selector("ha-panel-greenautarky-setup", state="attached")
+        await page.wait_for_function(
+            "() => customElements.get('ha-panel-greenautarky-setup') && "
+            "document.querySelector('ha-panel-greenautarky-setup').localize")
+        await page.evaluate(
+            "() => { const p = document.querySelector('ha-panel-greenautarky-setup');"
+            " p._currentStep = 'user'; return p.updateComplete; }")
+        await page.wait_for_selector("ga-setup-create-user", state="attached")
+        await page.locator("ga-setup-create-user").evaluate(
+            """async (el) => {
+                 el._newUser = {email: 'two@example.invalid', password: 'Correct-Horse-9',
+                                password_confirm: 'Correct-Horse-9'};
+                 el._passwordStrength = {...el._passwordStrength, score: 4};
+                 await el.updateComplete;
+               }""")
+        await page.locator("ga-setup-create-user .footer ha-button").click()
+        await page.wait_for_timeout(800)
+        out = {"posts": list(posts),
+               "alerts": await page.locator("ga-setup-create-user ha-alert").all_inner_texts(),
+               "replace_buttons": await page.locator("ga-setup-create-user ha-button.replace-account").count()}
+        if click_replace and out["replace_buttons"]:
+            await page.locator("ga-setup-create-user ha-button.replace-account").click()
+            await page.wait_for_timeout(800)
+            out["posts_after"] = list(posts)
+            out["replace_buttons_after"] = await page.locator(
+                "ga-setup-create-user ha-button.replace-account").count()
+        await browser.close()
+        return out
+
+
+def _409(replaceable):
+    return _json(409, {"code": "account_exists", "hint": "r***@example.invalid",
+                       "replaceable": replaceable, "message": "English server text"})
+
+
+async def test_a_replaceable_account_exists_offers_replace_with_a_warning_and_resends_the_flag():
+    out = await _run_account(_409(True), click_replace=True)
+    assert out["replace_buttons"] == 1, out
+    assert any(DE_REPLACE_WARNING in a.replace("\n", " ") or
+               " ".join(a.split()) == DE_REPLACE_WARNING for a in out["alerts"]), out
+    assert "replace_account" not in out["posts"][0], "the first submit must not ask to replace"
+    assert out["posts_after"][1].get("replace_account") is True, out
+    assert out["posts_after"][1]["username"] == "two@example.invalid"
+    assert out["replace_buttons_after"] == 0, "the offer must clear while the new request runs"
+
+
+async def test_a_non_replaceable_account_exists_shows_only_the_hint():
+    out = await _run_account(_409(False), click_replace=False)
+    assert out["replace_buttons"] == 0, out
+    assert any("r***@example.invalid" in a for a in out["alerts"]), out

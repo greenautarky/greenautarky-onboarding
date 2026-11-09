@@ -1,4 +1,4 @@
 source_repo: https://github.com/greenautarky/frontend.git
-source_ref: 05b4c05775dc6438400891b09ded1d9e6dd7e2ed
+source_ref: 3368714757658c2030bd362e1d08b487c5f2c9f9
 entry: greenautarky-setup
-built_at: 2026-11-09T10:26:49Z
+built_at: 2026-11-09T11:10:47Z

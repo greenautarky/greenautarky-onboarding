@@ -36,9 +36,13 @@ frontend:
   # step, a 403 "already completed" is success, any other failure shows an
   # error with a link to the start page, Back ends the recovery, and an
   # account_exists refusal of the account step is localized.
-  # The pin is the FULL commit SHA, also tagged ga/onboarding-2.12.11 in
-  # greenautarky/frontend so it survives a branch deletion.
-  ref: "05b4c05775dc6438400891b09ded1d9e6dd7e2ed"
+  # Review round 3 (+1 commit): on a 409 account_exists whose body says
+  # replaceable:true the account step offers "Konto ersetzen" with a warning and
+  # re-sends the request with replace_account:true.
+  # The pin is the FULL commit SHA, tagged ga/onboarding-2.12.11-r3 in
+  # greenautarky/frontend so it survives a branch deletion (the earlier
+  # ga/onboarding-2.12.11 tag stays on the round-2 commit).
+  ref: "3368714757658c2030bd362e1d08b487c5f2c9f9"
   entry: greenautarky-setup
   # Install deps first so --regen works on a fresh clone (CI runner or a fresh
   # local checkout). corepack pins the yarn the repo declares; idempotent when
