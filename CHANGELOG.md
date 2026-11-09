@@ -1,3 +1,27 @@
+## 2.12.11
+
+- **The setup page no longer hides a refused "finish": the resident is told, and led back to
+  the privacy step.**
+  Before: since 2.12.10 `POST /complete` can answer 409 `consent_missing`. The page swallowed
+  every error and sent the resident to the start page anyway - no message, the setup silently
+  unfinished, and the next visit started the wizard again. After: on the last step a refused
+  finish shows the server's message in a red box ("Die Einrichtung konnte nicht abgeschlossen
+  werden: ... Bitte stimme der Datenschutzerklärung erneut zu.") and shows the privacy step
+  again. Accepting it finishes the setup straight away - it does NOT go back to the account
+  step, so no second account is created. Any other failure shows "Die Einrichtung konnte nicht
+  abgeschlossen werden. Bitte versuche es erneut." and stays on the last step. Only a
+  successful finish leaves for the start page. The wizard bundle is rebuilt from the frontend
+  branch `ga/wizard-complete-409-1695` (`frontend.lock.yaml` ref `5877a7232`).
+- **An onboarding reset now clears the recorded consents.**
+  Before: `POST /reset` (QA, flasher, support) kept `consents`, so the previous resident's
+  privacy consent still opened the finish gate and a new run could complete without the new
+  resident ever agreeing. After: a reset starts from no consent at all (new resident = new
+  consent); the new run must accept the privacy policy, or `complete` answers 409. Anything
+  that relies on a consent surviving a reset has to seed it again. Decided 2026-11-09.
+  Tests: backend 1 red before (consents survived the reset), browser 4 red before (a refused
+  finish redirected to the start page), all green after; the happy path to the start page and
+  "consent after a reset can complete" are must-pass. Odoo #1695.
+
 ## 2.12.10
 
 - **`complete` refuses to close the setup wizard without a recorded GDPR consent.**

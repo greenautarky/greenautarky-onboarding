@@ -22,8 +22,8 @@ top-level paths. `hass.callApi("get", "greenautarky_site/x")` from frontend JS.
 | POST `/api/greenautarky_site/ethernet` | open (pre-completion only) | Record Ethernet consent choice. |
 | GET+POST `/api/greenautarky_site/led` | open | Read/set the iHost status-LED preference (ga_manager applies it). |
 | POST `/api/greenautarky_site/create_user` | open (ONE-SHOT: 403 "already completed" after onboarding) | Create the initial tenant account. |
-| POST `/api/greenautarky_site/complete` | open (pre-completion only) | Mark onboarding complete (registers panel teardown etc.). |
-| POST `/api/greenautarky_site/reset` | **token** (admin) | Reset wizard state so onboarding re-runs. |
+| POST `/api/greenautarky_site/complete` | open (pre-completion only) | Mark onboarding complete (registers panel teardown etc.). 409 `consent_missing` until a current GDPR consent is recorded. |
+| POST `/api/greenautarky_site/reset` | **token** (admin) | Reset wizard state so onboarding re-runs. Clears the consents too (new resident = new consent); a caller that needs one reseeds it. |
 
 ## Password reset (`onboarding/password_reset.py`)
 

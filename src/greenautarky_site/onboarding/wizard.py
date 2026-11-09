@@ -809,8 +809,13 @@ class GAOnboardingResetView(HomeAssistantView):
     Requires admin authentication — the ga-flasher uses the admin token
     obtained during Phase 1 provisioning to call this endpoint.
 
-    Resets: completed, gdpr_accepted, steps_done.
-    Preserves: consents (version-tracked separately).
+    Resets: completed, gdpr_accepted, steps_done, consents.
+
+    Consents are cleared too (Odoo #1695, decided 2026-11-09): a reset starts
+    a NEW resident's run, and a consent is personal. An earlier resident's
+    ``consents.gdpr`` must not satisfy the gate on ``complete`` for someone
+    who never accepted. A QA or flasher path that needs the consent after a
+    reset records it explicitly (the wizard's GDPR step, or a direct seed).
     """
 
     url = "/api/greenautarky_site/reset"
@@ -829,10 +834,11 @@ class GAOnboardingResetView(HomeAssistantView):
         state = _get_state(hass)
         store = _get_store(hass)
 
-        # Reset wizard state, preserve consents
+        # Reset wizard state, including consents: new resident = new consent.
         state["completed"] = False
         state["gdpr_accepted"] = False
         state["steps_done"] = []
+        state["consents"] = {}
         await store.async_save(state)
 
         # Re-register the sidebar panel if it was removed on completion.
