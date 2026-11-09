@@ -1,3 +1,85 @@
+## 2.12.11
+
+(Unreleased when amended: review rounds 2 and 3 stay inside this version, no tag or release exists.)
+
+- **The setup page no longer hides a refused "finish": the resident is told, and led back to
+  the privacy step.**
+  Before: since 2.12.10 `POST /complete` can answer 409 `consent_missing`. The page swallowed
+  every error and sent the resident to the start page anyway - no message, the setup silently
+  unfinished, and the next visit started the wizard again. After: on the last step a refused
+  finish shows a FIXED German/English text (never the server's English message): "Die
+  Einrichtung konnte nicht abgeschlossen werden, weil die Zustimmung zur Datenschutzerklärung
+  fehlt. Bitte stimme ihr erneut zu." and shows the privacy step again. It is keyed on
+  `code == "consent_missing"` with `gdpr` in `missing`; any other code falls back to the generic
+  error. Accepting the privacy step finishes the setup straight away - it does NOT go back to
+  the account step, so no second account is created. Browser Back from the re-shown privacy
+  step clears the notice and the recovery state. Any other failure (409 without that code,
+  5xx, network) shows "Die Einrichtung konnte nicht abgeschlossen werden. Bitte versuche es
+  erneut." with a link "Zur Startseite" and stays on the last step. A 403 "already completed"
+  (the finish landed earlier) counts as success and leaves like a 200. Only a successful
+  finish leaves for the start page. The wizard bundle is rebuilt from the frontend branch
+  `ga/wizard-complete-409-1695` (`frontend.lock.yaml` pins the full commit SHA, tagged
+  `ga/onboarding-2.12.11` in greenautarky/frontend).
+- **The "already completed" 403 carries a code.**
+  Before: `{"message": "Onboarding already completed"}`. After: `{"code": "already_completed",
+  "message": "..."}` so the page can tell it from the PIN gate's 403. Additive.
+- **The account step refuses a second address in the same run.**
+  Before: after a reload during the consent recovery (`completed` false, `account` in
+  `steps_done`, `pin_verified` kept) a DIFFERENT address created a second Home Assistant user
+  and a second Person; the console login "as resident" then refused on two marked accounts.
+  The SAME address was already safe (adopted with its password, one user, one Person). After:
+  409 `{"code": "account_exists", "hint": "r***@example.invalid", "message": ...}` and nothing is
+  created; the page shows a fixed German/English text with the masked hint. The refusal is per
+  run: a reset clears `steps_done`, so the next resident creates their own account; if the
+  run's account was deleted, creating one is allowed again.
+- **Review round 3: a resident who verified the PIN in this run can replace the not-yet-completed
+  account.** (Decided 2026-11-09, option a.)
+  Before: the 409 `account_exists` refusal of a second address was a dead end if the resident
+  had mistyped the first address. After: the 409 body also carries `replaceable`. The request
+  `create_user` with `"replace_account": true` deletes the previous HA user (with its login
+  credential, Person, personal dashboard and main-user flag) and creates the new account, only
+  if ALL of this holds: the run is PIN-verified and the device has a PIN file (a device without
+  one is refused by the PIN gate with 403 `pin_not_provisioned`, replacement included - so on a
+  no-PIN device nobody can replace anything); onboarding is not completed; the user id is the one
+  THIS run's account step created itself (tracked in the wizard state; an adopted account is not
+  replaceable) and is also in the account marker list; the user is not an owner, admin or system
+  user. Otherwise the 409 stays (`replaceable: false`). The same address is still adopted. The
+  page shows the offer "Konto ersetzen" with a German/English warning that the previous entry is
+  discarded, only when the server says `replaceable: true`. `account` leaves `steps_done` while
+  the swap runs, so a failure creating the new account cannot let `complete` pass with nobody
+  able to log in. A reset forgets the tracked id. Frontend: `ga/wizard-complete-409-1695`,
+  tagged `ga/onboarding-2.12.11-r3`.
+- **Review round 3: the reset's telemetry stamp.** The reset writes the defaults through the
+  telemetry component's `async_set_preferences`, which records a decision with a fresh
+  `accepted_at` / `policy_version` (a never-onboarded device has `policy_version_accepted:
+  null`). Checked: the wizard does not skip or pre-answer the telemetry step because of it (the
+  step order is fixed, the toggles start from the defaults, the stale-consent banner reads only
+  `consent_is_stale`, and the stamp is current so it is false). Restoring the never-decided
+  record needs a new entry point in greenautarky_telemetry; not part of this change.
+- **An onboarding reset now starts a new resident: new consent, new telemetry choice, new PIN
+  proof.**
+  Before: `POST /reset` (QA, flasher, support) kept `consents` (the previous resident's privacy
+  consent still opened the finish gate), kept the `greenautarky_telemetry` preferences (their
+  Tier 2 opt-in kept the consent-based processing running) and kept `pin_verified` (the next
+  person never proved physical access). After: `consents` is cleared, the telemetry
+  preferences go back to the defaults the wizard starts from (Tier 1 on, Tier 2 off) through
+  the telemetry component's own `async_set_preferences`, and `pin_verified` is false, so the
+  PIN step runs again (the PIN file and the attempt/lock counters are untouched). The response
+  gains `telemetry_reset`: `reset` or `absent` (no telemetry component). What holds: a
+  telemetry failure changes nothing; a failure saving the wizard state after a successful
+  telemetry reset leaves telemetry reset and returns 500 (`state_save_failed`); retry is
+  idempotent. A telemetry component older than 0.2.4 (review round 3) is a loud HTTP 500
+  `telemetry_component_outdated` - telemetry could not be reset, the component must be
+  updated - and changes nothing; it used to answer ok with `legacy` while the previous
+  Tier 2 opt-in stayed active. Anything that relies on a consent, a telemetry
+  choice or the PIN proof surviving a reset has to redo it. Decided 2026-11-09.
+  Tests: backend red before / green after (consents, telemetry tiers, `pin_verified` with the
+  real PIN gate, second address, 403 code); browser red before / green after (403, 500,
+  network error, generic notice with a way out, Back after recovery); the happy path to the
+  start page, a PIN-gate 403 that does not count as success, "consent after a reset can
+  complete", "a non-admin reset is refused", the first account of a run and a new run after a
+  reset are must-pass. Odoo #1695.
+
 ## 2.12.10
 
 - **`complete` refuses to close the setup wizard without a recorded GDPR consent.**
