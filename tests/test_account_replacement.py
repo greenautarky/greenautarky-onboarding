@@ -31,7 +31,7 @@ from greenautarky_site.onboarding.wizard import (
     GAOnboardingCreateUserView,
 )
 
-SECRET = "hunter2-abcdef"
+THE_USUAL = "hunter2-abcdef"
 
 
 class _FakeStore:
@@ -74,7 +74,7 @@ def run(hass, monkeypatch):
     return st
 
 
-async def _post(hass, username, name, *, replace=False, secret=SECRET):
+async def _post(hass, username, name, *, replace=False, secret=THE_USUAL):
     body = {"client_id": "http://localhost:8123/", "name": name, "username": username,
             "password": secret}
     if replace:
@@ -97,7 +97,7 @@ async def _foreign(hass, name, username, *, admin=False):
     await provider.async_initialize()
     user = await hass.auth.async_create_user(
         name, group_ids=[GROUP_ID_ADMIN if admin else GROUP_ID_USER])
-    await provider.async_add_auth(username, SECRET)
+    await provider.async_add_auth(username, THE_USUAL)
     creds = await provider.async_get_or_create_credentials({"username": username})
     await hass.auth.async_link_user(user, creds)
     return user
@@ -122,7 +122,7 @@ async def test_replace_with_a_verified_pin_deletes_the_old_user_and_person(hass,
     assert "account" in run["steps_done"]
     # The old address is free again and the new one logs in.
     provider = next(p for p in hass.auth.auth_providers if p.type == "homeassistant")
-    await provider.async_validate_login("two@example.invalid", SECRET)
+    await provider.async_validate_login("two@example.invalid", THE_USUAL)
 
 
 async def test_without_the_replace_request_the_409_stays(hass, run):

@@ -33,3 +33,10 @@
 #   nobody can tell this finding from a real one. That is exactly the failure
 #   .gitleaks.toml's own header warns about, and it had already happened here.
 2d70f5e1dd0bed4918e6f887dff93299665f3ed6:tests/test_onboarding_account_step.py:generic-api-key:131
+
+# Review round 3 (2026-11-09): a TEST password literal (example.invalid fixtures,
+# not a credential, nothing to revoke) in tests/test_account_replacement.py, flagged
+# as generic-api-key on entropy in the commit that added the file. The file at HEAD
+# names the variable differently (same pattern as test_onboarding_account_step.py).
+# Pinned to the exact commit fingerprint, never a path or a rule.
+e739010df6f0360b9a82013b9550d8672b92ccdd:tests/test_account_replacement.py:generic-api-key:34
