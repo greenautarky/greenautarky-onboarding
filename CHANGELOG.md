@@ -1,3 +1,15 @@
+## 2.12.10
+
+- **`complete` refuses to close the setup wizard without a recorded GDPR consent.**
+  Until 2.12.9 `POST /complete` answered 200 and persisted `completed: true` while
+  `consents` was empty and `/consent/status` listed `gdpr` as outdated. It now answers 409
+  (`code: consent_missing`, `missing: ["gdpr"]`, with a message) until the versioned
+  `consents.gdpr` record is current. The wizard's own GDPR step now writes that record
+  (it only set the legacy `gdpr_accepted` flag before), and a "no" to the GDPR step answers
+  400 instead of marking the step done. Ethernet stays a choice, not a precondition.
+  Tests: 7 red before, green after; a full-consent case and an Ethernet-skipped case are
+  must-pass. Odoo #1004.
+
 ## 2.12.9
 
 - **A resident is never offered the Zigbee coordinator's "Permit join" switch.**

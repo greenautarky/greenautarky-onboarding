@@ -43,7 +43,8 @@ def _seed(hass, *, steps_done) -> dict:
     st = {
         "completed": False,
         "steps_done": list(steps_done),
-        "consents": {},
+        # GDPR is recorded: the consent gate (Odoo #1004) is not the subject here.
+        "consents": {"gdpr": {"version": 1, "accepted_at": "2026-11-09T00:00:00+00:00"}},
         "pin_verified": True,
     }
     hass.data[DOMAIN] = {"store": _FakeStore(), "state": st}
