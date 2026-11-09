@@ -27,9 +27,9 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 
 from .. import dashboards
-from ..consent import async_record_consent
+from ..consent import async_record_consent, get_outdated_consents
 from ..console_as import record_account
-from ..const import SITE_DEFAULT_LANGUAGE
+from ..const import REQUIRED_FOR_COMPLETE, SITE_DEFAULT_LANGUAGE
 from ..household.dashboards_admin import _reconcile_dashboard_visibility
 from ..household.masters import _read_master_user_ids, _write_master_users
 from ..household.sub_users import _async_create_linked_person
@@ -172,6 +172,35 @@ def _check_account_exists(hass: HomeAssistant) -> web.Response | None:
                     "account step first. Finishing here would close the wizard "
                     "with nobody able to log in."
                 )
+            },
+            status=409,
+        )
+    return None
+
+
+def _check_required_consents(hass: HomeAssistant) -> web.Response | None:
+    """Return a 409 if a consent required for ``complete`` is not recorded.
+
+    Odoo #1004 (F-A): ``complete`` used to persist ``completed: true`` with
+    ``consents: {}``, so a device could finish onboarding with no GDPR
+    acceptance on record. The subject is the versioned ``consents`` record,
+    which is what ``/consent/status`` reports; the legacy ``gdpr_accepted``
+    boolean and the ``steps_done`` marker prove only that a page was visited.
+    A stale version counts as missing, same as ``/consent/status``.
+    """
+    outdated = get_outdated_consents(_get_state(hass))
+    missing = [c for c in REQUIRED_FOR_COMPLETE if c in outdated]
+    if missing:
+        return web.json_response(
+            {
+                "code": "consent_missing",
+                "missing": missing,
+                "message": (
+                    "Required consent not recorded: "
+                    + ", ".join(missing)
+                    + ". Accept the privacy policy (GDPR) before finishing "
+                    "the setup."
+                ),
             },
             status=409,
         )
@@ -331,7 +360,22 @@ class GAOnboardingGDPRView(HomeAssistantView):
         store = _get_store(hass)
 
         body = await request.json()
-        state["gdpr_accepted"] = bool(body.get("accepted", False))
+        if not body.get("accepted", False):
+            # A "no" is not an acceptance: record nothing and do not mark the
+            # step done (Odoo #1004), or `complete` would be one call away.
+            state["gdpr_accepted"] = False
+            await store.async_save(state)
+            return web.json_response(
+                {
+                    "code": "consent_declined",
+                    "message": "The privacy policy must be accepted to continue.",
+                },
+                status=400,
+            )
+        state["gdpr_accepted"] = True
+        # Write the versioned record the gate on `complete` reads; the legacy
+        # boolean alone left the two sources of truth apart (Odoo #1004, F-B).
+        await async_record_consent(hass, store, state, "gdpr")
         if "gdpr" not in state["steps_done"]:
             state["steps_done"].append("gdpr")
         await store.async_save(state)
@@ -530,6 +574,10 @@ class GAOnboardingCompleteView(HomeAssistantView):
         # The PIN says someone stood at the device. It does not say the wizard
         # was walked. See _check_account_exists.
         if err := _check_account_exists(hass):
+            return err
+        # And the consent: ``completed`` is also the claim that the resident
+        # accepted the privacy policy. See _check_required_consents.
+        if err := _check_required_consents(hass):
             return err
 
         state = _get_state(hass)

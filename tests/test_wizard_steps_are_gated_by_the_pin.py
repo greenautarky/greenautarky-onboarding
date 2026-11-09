@@ -94,6 +94,8 @@ async def test_complete_still_works_once_the_pin_is_verified(hass, monkeypatch):
     # The account step is not the subject of this file; record it so the order
     # guard (2.9.3) does not mask the PIN gate under test.
     st["steps_done"].append("account")
+    # Nor is the consent (Odoo #1004): record it so that gate cannot mask this one.
+    st["consents"]["gdpr"] = {"version": 1, "accepted_at": "2026-11-09T00:00:00+00:00"}
 
     resp = await GAOnboardingCompleteView().post(_FakeRequest(hass, {}))
 

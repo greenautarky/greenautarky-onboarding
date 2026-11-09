@@ -30,6 +30,11 @@ CONSENT_TYPES: dict[str, int] = {
     "ethernet": 1,
 }
 
+# Consents the wizard must hold before ``complete`` may close it (Odoo #1004).
+# GDPR only: Ethernet is a choice (recorded on OR off) and telemetry is not a
+# versioned consent, so neither is a precondition of finishing.
+REQUIRED_FOR_COMPLETE: tuple[str, ...] = ("gdpr",)
+
 # Human-readable titles for consent types (German)
 CONSENT_TITLES: dict[str, str] = {
     "gdpr": "Datenschutzerklärung",
