@@ -21,9 +21,9 @@ top-level paths. `hass.callApi("get", "greenautarky_site/x")` from frontend JS.
 | POST `/api/greenautarky_site/telemetry` | open (pre-completion only) | Record telemetry consent choice. |
 | POST `/api/greenautarky_site/ethernet` | open (pre-completion only) | Record Ethernet consent choice. |
 | GET+POST `/api/greenautarky_site/led` | open | Read/set the iHost status-LED preference (ga_manager applies it). |
-| POST `/api/greenautarky_site/create_user` | open (ONE-SHOT: 403 "already completed" after onboarding) | Create the initial tenant account. |
+| POST `/api/greenautarky_site/create_user` | open (ONE-SHOT: 403 `already_completed` after onboarding) | Create the initial tenant account. Same address again (with its password): adopted. A DIFFERENT address after this run already created one: 409 `account_exists` + masked `hint`, nothing created. |
 | POST `/api/greenautarky_site/complete` | open (pre-completion only) | Mark onboarding complete (registers panel teardown etc.). 409 `consent_missing` until a current GDPR consent is recorded. |
-| POST `/api/greenautarky_site/reset` | **token** (admin) | Reset wizard state so onboarding re-runs. Clears the consents too (new resident = new consent); a caller that needs one reseeds it. |
+| POST `/api/greenautarky_site/reset` | **token** (admin) | Reset wizard state so onboarding re-runs for a NEW resident. Before: kept `consents`, the telemetry preferences and `pin_verified`. After: clears `consents`, sets the `greenautarky_telemetry` preferences back to the wizard defaults (Tier 1 on, Tier 2 off) and `pin_verified` to false (PIN file and attempt counters untouched). Response `{"status":"ok","telemetry_reset":"reset"\|"absent"\|"legacy"}`; 500 and nothing changed if the telemetry reset fails. A caller that needs a consent, a telemetry choice or the PIN proof redoes it. |
 
 ## Password reset (`onboarding/password_reset.py`)
 

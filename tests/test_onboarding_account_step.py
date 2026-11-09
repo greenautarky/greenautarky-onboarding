@@ -53,6 +53,7 @@ before suspecting the package.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
@@ -191,20 +192,79 @@ async def test_the_account_step_is_not_a_dead_end(hass) -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_different_username_still_creates_a_second_account(hass) -> None:
-    """The must-pass half.
+async def test_a_different_username_in_the_same_run_is_refused_cleanly(hass) -> None:
+    """The second-account half (Odoo #1695, review round 2).
 
-    A fix that simply refused to create anything would satisfy both assertions
-    above and break onboarding entirely. Adopting an existing account must not
-    become never creating one.
+    A page reload during the consent recovery restarts the wizard at the
+    account step with ``account`` already in ``steps_done``. A DIFFERENT address
+    used to mint a second user and a second Person. It is refused now, with a
+    code the page handles, and nothing is created.
     """
     await _install_hass_auth_provider(hass)
     _seed(hass)
-    await _post(hass, "one@example.invalid", name="One")
-    await _post(hass, "two@example.invalid", name="Two")
+    first = await _post(hass, "one@example.invalid", name="One")
+    assert first.status == 200, "the FIRST account of a run must still be created"
+    second = await _post(hass, "two@example.invalid", name="Two")
 
+    assert second.status == 409, "a second address in the same run created a second account"
+    body = json.loads(second.body)
+    assert body["code"] == "account_exists"
+    assert body["hint"] == "o***@example.invalid", "the address must be masked, not echoed"
+    assert "one@example.invalid" not in second.body.decode()
+    assert _count(hass, "One") == 1
+    assert _count(hass, "Two") == 0
+
+
+@pytest.mark.asyncio
+async def test_a_new_run_after_a_reset_may_create_another_account(hass) -> None:
+    """Must-pass: the refusal is per RUN. A reset clears ``steps_done``, so the
+    next resident's run creates their own account even though the previous
+    resident's account (and its marker) is still on the device."""
+    await _install_hass_auth_provider(hass)
+    st = _seed(hass)
+    await _post(hass, "one@example.invalid", name="One")
+    st["steps_done"] = []  # what a reset does
+
+    again = await _post(hass, "two@example.invalid", name="Two")
+
+    assert again.status == 200
     assert _count(hass, "One") == 1
     assert _count(hass, "Two") == 1
+
+
+@pytest.mark.asyncio
+async def test_a_deleted_first_account_does_not_block_the_step(hass) -> None:
+    """Must-pass: if the run's account no longer exists, creating one is allowed."""
+    await _install_hass_auth_provider(hass)
+    _seed(hass)
+    await _post(hass, "one@example.invalid", name="One")
+    user = next(u for u in hass.auth._store._users.values() if u.name == "One")
+    await hass.auth.async_remove_user(user)
+
+    again = await _post(hass, "two@example.invalid", name="Two")
+
+    assert again.status == 200
+    assert _count(hass, "Two") == 1
+
+
+@pytest.mark.asyncio
+async def test_reloading_and_resubmitting_the_same_account_adopts_it(hass) -> None:
+    """The reload scenario end to end: ``completed`` false, ``account`` done,
+    PIN kept; the resident types the same address and password again. One
+    user, one Person, an auth_code - not a second account and not a trap."""
+    await _install_hass_auth_provider(hass)
+    st = _seed(hass)
+    await _post(hass, "same@example.invalid", name="Same")
+    assert st["steps_done"].count("account") == 1
+
+    again = await _post(hass, "same@example.invalid", name="Same")
+
+    assert again.status == 200
+    assert "auth_code" in json.loads(again.body)
+    assert _count(hass, "Same") == 1
+    assert st["steps_done"].count("account") == 1
+    people = [p for p in hass.states.async_all("person") if p.name == "Same"]
+    assert len(people) <= 1
 
 
 @pytest.mark.asyncio

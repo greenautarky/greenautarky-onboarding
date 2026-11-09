@@ -28,7 +28,7 @@ from homeassistant.helpers.storage import Store
 
 from .. import dashboards
 from ..consent import async_record_consent, get_outdated_consents
-from ..console_as import record_account
+from ..console_as import ACCOUNT_MARKER_KEY, record_account
 from ..const import REQUIRED_FOR_COMPLETE, SITE_DEFAULT_LANGUAGE
 from ..household.dashboards_admin import _reconcile_dashboard_visibility
 from ..household.masters import _read_master_user_ids, _write_master_users
@@ -144,6 +144,39 @@ async def _async_undo(hass: HomeAssistant, provider, user, username: str | None)
     except Exception:
         _LOGGER.exception("onboarding: could not remove the half-created user %s", user.id)
 
+
+def _mask_username(username: str) -> str:
+    """``r***@example.invalid`` for ``resident@example.invalid``.
+
+    Enough for the resident to recognise their own address, not enough to read
+    it off the screen of a device they merely stand in front of.
+    """
+    local, at, domain = username.partition("@")
+    return (local[:1] + "***" + at + domain) if local else "***"
+
+
+async def _async_recorded_account_hint(hass: HomeAssistant, state: dict) -> str | None:
+    """The masked address of the account THIS run already created, else None.
+
+    "This run" is ``"account" in steps_done``: a reset clears that list, so the
+    account a previous resident's run left behind (still in the marker list)
+    does not count. The newest marked account is the one this run made. If it
+    is gone or inactive the step may create one again.
+    """
+    if "account" not in state.get("steps_done", []):
+        return None
+    ids = state.get(ACCOUNT_MARKER_KEY)
+    if not isinstance(ids, list) or not ids or not isinstance(ids[-1], str):
+        return None
+    user = await hass.auth.async_get_user(ids[-1])
+    if user is None or not user.is_active or user.system_generated:
+        return None
+    for cred in user.credentials:
+        if cred.auth_provider_type == "homeassistant":
+            return _mask_username(str(cred.data.get("username", "")))
+    return None
+
+
 def _check_account_exists(hass: HomeAssistant) -> web.Response | None:
     """Return a 409 if no resident account has been created yet.
 
@@ -212,7 +245,8 @@ def _check_not_completed(hass: HomeAssistant) -> web.Response | None:
     state = _get_state(hass)
     if state.get("completed"):
         return web.json_response(
-            {"message": "Onboarding already completed"}, status=403
+            {"code": "already_completed", "message": "Onboarding already completed"},
+            status=403
         )
     return None
 
@@ -437,6 +471,43 @@ def _telemetry_set_preferences():
         if setter is not None:
             return setter
     return None
+
+
+#: What the wizard's telemetry step starts from: Tier 1 (legitimate interest)
+#: on, Tier 2 (consent) off. Pinned here, and in the tests, to the telemetry
+#: component's ``DEFAULT_PREFERENCES``.
+_TELEMETRY_WIZARD_DEFAULTS = {"error_logs": True, "metrics": False}
+
+
+async def _async_reset_telemetry_preferences(hass: HomeAssistant) -> str:
+    """Put the telemetry preferences back to the wizard's starting defaults.
+
+    Returns ``"absent"`` (no telemetry component on this device, nothing to
+    reset), ``"reset"`` (through the component's own entry point) or
+    ``"legacy"`` (component older than 0.2.4: flat keys only, said loudly).
+
+    Limit: the component's setter records a DECISION, so the tiers return to the
+    defaults but carry a fresh ``accepted_at`` / ``policy_version`` instead of
+    the never-onboarded record (``policy_version_accepted: None``). Writing that
+    exact record needs an entry point in greenautarky_telemetry that does not
+    exist yet; the values the OS gate reads are right either way.
+    """
+    telemetry_data = hass.data.get("greenautarky_telemetry")
+    if not telemetry_data:
+        return "absent"
+    setter = _telemetry_set_preferences()
+    if setter is not None:
+        await setter(hass, **_TELEMETRY_WIZARD_DEFAULTS)
+        return "reset"
+    _LOGGER.warning(
+        "onboarding reset: greenautarky_telemetry has no async_set_preferences "
+        "(component older than 0.2.4) - resetting the legacy flat keys only; the "
+        "tier record keeps the previous resident's values"
+    )
+    prefs = telemetry_data["preferences"]
+    prefs.update(_TELEMETRY_WIZARD_DEFAULTS)
+    await telemetry_data["store"].async_save(prefs)
+    return "legacy"
 
 
 class GAOnboardingTelemetryView(HomeAssistantView):
@@ -672,6 +743,33 @@ class GAOnboardingCreateUserView(HomeAssistantView):
         # someone, ADOPT that user instead of failing. Onboarding is a flow a
         # person walks once; it has to survive being walked twice.
         state, existing_user, credentials = await _async_account_state(hass, provider, username)
+        if state == "absent":
+            # A SECOND ADDRESS FOR THE SAME RUN. This run already created its
+            # account (a page reload during the consent recovery of Odoo #1695
+            # restarts the wizard at the account step with `account` in
+            # steps_done and `pin_verified` kept). A different address here
+            # used to mint a second HA user and a second Person next to the
+            # first, and the console login's "as resident" then refuses on two
+            # marked accounts. Refuse with a code the page handles; the same
+            # address (+ password) is adopted below, as before.
+            hint = await _async_recorded_account_hint(hass, _get_state(hass))
+            if hint is not None:
+                _LOGGER.warning(
+                    "onboarding: an account was already created in this run (%s); "
+                    "refusing a second one for another address", hint,
+                )
+                return web.json_response(
+                    {
+                        "code": "account_exists",
+                        "hint": hint,
+                        "message": (
+                            "An account was already created on this device "
+                            f"({hint}). Sign in with that address; a second "
+                            "account is not created."
+                        ),
+                    },
+                    status=409,
+                )
         if state != "absent":
             # Adopting an account — or healing a half-created one — means handing
             # out an auth_code for it, so the password has to be checked FIRST.
@@ -809,13 +907,22 @@ class GAOnboardingResetView(HomeAssistantView):
     Requires admin authentication — the ga-flasher uses the admin token
     obtained during Phase 1 provisioning to call this endpoint.
 
-    Resets: completed, gdpr_accepted, steps_done, consents.
+    Resets: completed, gdpr_accepted, steps_done, consents, pin_verified, and
+    the ``greenautarky_telemetry`` preferences (back to the wizard defaults).
 
-    Consents are cleared too (Odoo #1695, decided 2026-11-09): a reset starts
-    a NEW resident's run, and a consent is personal. An earlier resident's
-    ``consents.gdpr`` must not satisfy the gate on ``complete`` for someone
-    who never accepted. A QA or flasher path that needs the consent after a
-    reset records it explicitly (the wizard's GDPR step, or a direct seed).
+    NEW RESIDENT = NEW CONSENT (Odoo #1695, decided 2026-11-09). A reset starts
+    a NEW resident's run, and a consent is personal:
+
+    * ``consents`` is cleared: an earlier resident's ``consents.gdpr`` must not
+      satisfy the gate on ``complete`` for someone who never accepted.
+    * the telemetry preferences return to the defaults the wizard starts from
+      (Tier 1 on, Tier 2 off): the previous resident's Tier 2 opt-in must not
+      keep the consent-based processing running for the next one.
+    * ``pin_verified`` is cleared: the new resident proves physical access
+      again. (The PIN file and the attempt/lock counters are NOT touched.)
+
+    A QA or flasher path that needs any of these after a reset records it
+    explicitly (verify the PIN, accept the GDPR step, set the telemetry step).
     """
 
     url = "/api/greenautarky_site/reset"
@@ -834,11 +941,28 @@ class GAOnboardingResetView(HomeAssistantView):
         state = _get_state(hass)
         store = _get_store(hass)
 
-        # Reset wizard state, including consents: new resident = new consent.
+        # The telemetry preferences first: if that cannot be done, nothing else
+        # has changed yet and the caller can simply retry. A reset that left
+        # the previous resident's opt-in running while reporting success would
+        # be the defect this endpoint now exists to prevent.
+        try:
+            telemetry_reset = await _async_reset_telemetry_preferences(hass)
+        except Exception:
+            _LOGGER.exception("onboarding reset: telemetry preferences could not be reset")
+            return web.json_response(
+                {
+                    "status": "error",
+                    "message": "Telemetry preferences could not be reset; nothing was reset.",
+                },
+                status=500,
+            )
+
+        # Reset wizard state: new resident = new consent, new proof of access.
         state["completed"] = False
         state["gdpr_accepted"] = False
         state["steps_done"] = []
         state["consents"] = {}
+        state["pin_verified"] = False
         await store.async_save(state)
 
         # Re-register the sidebar panel if it was removed on completion.
@@ -858,4 +982,4 @@ class GAOnboardingResetView(HomeAssistantView):
             await _async_register_panel(hass)
 
         _LOGGER.info("greenautarky onboarding state reset by %s", user.name)
-        return self.json({"status": "ok"})
+        return self.json({"status": "ok", "telemetry_reset": telemetry_reset})

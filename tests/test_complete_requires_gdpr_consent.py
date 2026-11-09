@@ -142,3 +142,14 @@ async def test_declining_gdpr_records_nothing_and_does_not_unlock_complete(
     resp = await GAOnboardingCompleteView().post(_FakeRequest(hass, {}))
     assert resp.status == 409
     assert st["completed"] is False
+
+
+async def test_an_already_completed_refusal_carries_a_code_the_page_reads(hass):
+    """The setup page treats 403 + ``already_completed`` as success (the finish
+    landed earlier). Any other 403 - the PIN gate - must NOT carry that code."""
+    from greenautarky_site.onboarding.wizard import _check_not_completed
+
+    hass.data.setdefault(DOMAIN, {})["state"] = {"completed": True}
+    resp = _check_not_completed(hass)
+    assert resp.status == 403
+    assert b'"code": "already_completed"' in resp.body

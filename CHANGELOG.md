@@ -1,26 +1,56 @@
 ## 2.12.11
 
+(Unreleased when amended: review round 2 stays inside this version, no tag or release exists.)
+
 - **The setup page no longer hides a refused "finish": the resident is told, and led back to
   the privacy step.**
   Before: since 2.12.10 `POST /complete` can answer 409 `consent_missing`. The page swallowed
   every error and sent the resident to the start page anyway - no message, the setup silently
   unfinished, and the next visit started the wizard again. After: on the last step a refused
-  finish shows the server's message in a red box ("Die Einrichtung konnte nicht abgeschlossen
-  werden: ... Bitte stimme der Datenschutzerklärung erneut zu.") and shows the privacy step
-  again. Accepting it finishes the setup straight away - it does NOT go back to the account
-  step, so no second account is created. Any other failure shows "Die Einrichtung konnte nicht
-  abgeschlossen werden. Bitte versuche es erneut." and stays on the last step. Only a
-  successful finish leaves for the start page. The wizard bundle is rebuilt from the frontend
-  branch `ga/wizard-complete-409-1695` (`frontend.lock.yaml` ref `5877a7232`).
-- **An onboarding reset now clears the recorded consents.**
-  Before: `POST /reset` (QA, flasher, support) kept `consents`, so the previous resident's
-  privacy consent still opened the finish gate and a new run could complete without the new
-  resident ever agreeing. After: a reset starts from no consent at all (new resident = new
-  consent); the new run must accept the privacy policy, or `complete` answers 409. Anything
-  that relies on a consent surviving a reset has to seed it again. Decided 2026-11-09.
-  Tests: backend 1 red before (consents survived the reset), browser 4 red before (a refused
-  finish redirected to the start page), all green after; the happy path to the start page and
-  "consent after a reset can complete" are must-pass. Odoo #1695.
+  finish shows a FIXED German/English text (never the server's English message): "Die
+  Einrichtung konnte nicht abgeschlossen werden, weil die Zustimmung zur Datenschutzerklärung
+  fehlt. Bitte stimme ihr erneut zu." and shows the privacy step again. It is keyed on
+  `code == "consent_missing"` with `gdpr` in `missing`; any other code falls back to the generic
+  error. Accepting the privacy step finishes the setup straight away - it does NOT go back to
+  the account step, so no second account is created. Browser Back from the re-shown privacy
+  step clears the notice and the recovery state. Any other failure (409 without that code,
+  5xx, network) shows "Die Einrichtung konnte nicht abgeschlossen werden. Bitte versuche es
+  erneut." with a link "Zur Startseite" and stays on the last step. A 403 "already completed"
+  (the finish landed earlier) counts as success and leaves like a 200. Only a successful
+  finish leaves for the start page. The wizard bundle is rebuilt from the frontend branch
+  `ga/wizard-complete-409-1695` (`frontend.lock.yaml` pins the full commit SHA, tagged
+  `ga/onboarding-2.12.11` in greenautarky/frontend).
+- **The "already completed" 403 carries a code.**
+  Before: `{"message": "Onboarding already completed"}`. After: `{"code": "already_completed",
+  "message": "..."}` so the page can tell it from the PIN gate's 403. Additive.
+- **The account step refuses a second address in the same run.**
+  Before: after a reload during the consent recovery (`completed` false, `account` in
+  `steps_done`, `pin_verified` kept) a DIFFERENT address created a second Home Assistant user
+  and a second Person; the console login "as resident" then refused on two marked accounts.
+  The SAME address was already safe (adopted with its password, one user, one Person). After:
+  409 `{"code": "account_exists", "hint": "r***@example.invalid", "message": ...}` and nothing is
+  created; the page shows a fixed German/English text with the masked hint. The refusal is per
+  run: a reset clears `steps_done`, so the next resident creates their own account; if the
+  run's account was deleted, creating one is allowed again.
+- **An onboarding reset now starts a new resident: new consent, new telemetry choice, new PIN
+  proof.**
+  Before: `POST /reset` (QA, flasher, support) kept `consents` (the previous resident's privacy
+  consent still opened the finish gate), kept the `greenautarky_telemetry` preferences (their
+  Tier 2 opt-in kept the consent-based processing running) and kept `pin_verified` (the next
+  person never proved physical access). After: `consents` is cleared, the telemetry
+  preferences go back to the defaults the wizard starts from (Tier 1 on, Tier 2 off) through
+  the telemetry component's own `async_set_preferences`, and `pin_verified` is false, so the
+  PIN step runs again (the PIN file and the attempt/lock counters are untouched). The response
+  gains `telemetry_reset`: `reset`, `absent` (no telemetry component) or `legacy` (component
+  older than 0.2.4: flat keys only, logged as a warning). If the telemetry reset fails the
+  endpoint answers 500 and changes nothing. Anything that relies on a consent, a telemetry
+  choice or the PIN proof surviving a reset has to redo it. Decided 2026-11-09.
+  Tests: backend red before / green after (consents, telemetry tiers, `pin_verified` with the
+  real PIN gate, second address, 403 code); browser red before / green after (403, 500,
+  network error, generic notice with a way out, Back after recovery); the happy path to the
+  start page, a PIN-gate 403 that does not count as success, "consent after a reset can
+  complete", "a non-admin reset is refused", the first account of a run and a new run after a
+  reset are must-pass. Odoo #1695.
 
 ## 2.12.10
 
