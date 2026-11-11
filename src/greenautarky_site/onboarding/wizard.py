@@ -366,9 +366,12 @@ class GAAdminBypassView(HomeAssistantView):
     GA setup panel which is the auto-default while onboarding is incomplete.
 
     A `ga_bypass=1` cookie is also set on the redirect response so the
-    server-side IndexView (frontend/__init__.py) skips its own redirect
-    when the post-OAuth `/config?code=…` landing arrives without the
-    `ga_bypass=1` query (HA's OAuth strips query params from redirect_uri).
+    server-side IndexView patch (`_patch_index_view_for_wizard_redirect` in
+    __init__.py) skips its wizard redirect when the post-OAuth
+    `/config?code=…` landing arrives without the `ga_bypass=1` query (HA's
+    OAuth strips query params from redirect_uri). The cookie only lifts the
+    redirect (and flips `completed` in the status view); HA authentication is
+    still required for everything beyond the frontend shell.
     """
 
     url = "/admin"
