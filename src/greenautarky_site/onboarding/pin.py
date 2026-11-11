@@ -245,13 +245,14 @@ class GAPinVerifyView(HomeAssistantView):
                 )
 
         # Read PIN from device file
+        # File I/O off the event loop (Odoo #1744): Core 2026.10 flags a blocking
+        # open() here. _read_pin returns None for an absent/unreadable file.
         pin_path = _pin_file_path(hass)
-        if not pin_path.exists():
+        stored_pin = await hass.async_add_executor_job(_read_pin, pin_path)
+        if stored_pin is None:
             return self.json(
                 {"error": "No PIN configured on this device"}, status_code=404
             )
-
-        stored_pin = pin_path.read_text().strip()
 
         # Parse submitted PIN (strip dashes, whitespace)
         body = await request.json()
