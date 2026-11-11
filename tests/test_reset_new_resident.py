@@ -122,10 +122,15 @@ async def test_reset_clears_pin_verified_and_a_gated_step_refuses_again(hass, mo
     # A device with a provisioned PIN: the REAL gate runs, not a stub of it.
     monkeypatch.setattr(pin_module, "_pin_required", lambda _hass: True)
 
+    from greenautarky_site.onboarding.session import SESSION_COOKIE, create_session
+
+    sid = create_session(hass)  # the previous resident's browser session
     await GAOnboardingResetView().post(_FakeRequest(hass, user=_User(True)))
 
     assert st["pin_verified"] is False
-    resp = await GAOnboardingGDPRView().post(_FakeRequest(hass, {"accepted": True}))
+    req = _FakeRequest(hass, {"accepted": True})
+    req.cookies = {SESSION_COOKIE: sid}  # the OLD session must be dead after reset
+    resp = await GAOnboardingGDPRView().post(req)
     assert resp.status == 403, "a gated step answered without a fresh PIN proof after the reset"
     # The brute-force counters are not a resident's to wipe.
     assert st["pin_attempts"] == 2

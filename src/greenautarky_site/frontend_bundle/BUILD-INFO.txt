@@ -2,3 +2,4 @@ source_repo: https://github.com/greenautarky/frontend.git
 source_ref: 3368714757658c2030bd362e1d08b487c5f2c9f9
 entry: greenautarky-setup
 built_at: 2026-11-09T11:10:47Z
+post_build_patch: 2.12.13 (F3c) - setup entry no longer auto-fills the device PIN from ?pin= outside join mode (frontend source archived; patched in committed bytes; see CHANGELOG)

@@ -175,16 +175,14 @@ async def _location(view: IndexView, query: dict) -> str:
     return response.headers["location"]
 
 
-async def test_label_qr_pin_and_device_survive_the_redirect(unpatched_index_view):
-    """The customer scanned the QR code; the PIN must reach the panel."""
+async def test_label_qr_device_survives_but_the_pin_is_not_forwarded(unpatched_index_view):
+    """F3c (2.12.13): a printed QR still opens the wizard, but the permanent
+    label PIN never rides in a Location header and is not pre-filled."""
     location = await _location(
         _pending_view(), {"pin": "123456", "device": "KIB-SON-00000000"}
     )
-    assert location == f"{SETUP_PATH}?pin=123456&device=KIB-SON-00000000", (
-        "the label QR code carries ?pin=&device= and the setup panel auto-fills "
-        "the six digits from it — a redirect to a bare path makes the customer "
-        "type a PIN they already scanned"
-    )
+    assert location == f"{SETUP_PATH}?device=KIB-SON-00000000"
+    assert "123456" not in location
 
 
 async def test_no_query_still_redirects_to_the_bare_path(unpatched_index_view):
@@ -205,7 +203,7 @@ async def test_only_pin_and_device_are_forwarded(unpatched_index_view):
         _pending_view(),
         {"pin": "123456", "evil": "x\r\nSet-Cookie: a=b", "next": "//attacker.example"},
     )
-    assert location == f"{SETUP_PATH}?pin=123456"
+    assert location == SETUP_PATH
 
 
 async def test_forwarded_values_are_encoded_not_pasted(unpatched_index_view):

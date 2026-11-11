@@ -181,7 +181,11 @@ async def test_invite_issued_by_master(hass) -> None:
     # plaintext PIN must NOT be stored — only its hash
     inv = state["sub_user_invites"][0]
     assert "pin" not in inv
-    assert inv["pin_sha256"] == _hash_invite_pin(pin)
+    assert "pin_sha256" not in inv  # no unsalted hash at rest (2.12.13)
+    assert inv["pin_kdf"] == "scrypt-v1" and inv["pin_salt"] and inv["pin_hash"]
+    from greenautarky_site.household.sub_users import _invite_matches
+
+    assert _invite_matches(inv, pin) and not _invite_matches(inv, "000000")
     assert inv["master_user_id"] == master.id
 
 

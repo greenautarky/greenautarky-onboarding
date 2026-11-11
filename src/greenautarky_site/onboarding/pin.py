@@ -20,6 +20,7 @@ from homeassistant.core import HomeAssistant
 
 from ..const import PIN_FILE, PIN_FILE_LEGACY, PIN_MAX_DELAY
 from ..store import _get_state, _get_store
+from .session import create_session, session_valid, set_session_cookie
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -93,8 +94,11 @@ def _pin_required(hass: HomeAssistant) -> bool:
     return _pin_file_path(hass).exists()
 
 
-def _check_pin_verified(hass: HomeAssistant) -> web.Response | None:
-    """Return 403 unless the sticker PIN has been verified.
+def _check_pin_verified(hass: HomeAssistant, request: web.Request) -> web.Response | None:
+    """Return 403 unless THIS browser session has verified the sticker PIN.
+
+    Session-bound since 2.12.13 (F2): a global "someone verified" flag let any
+    client drive the gated steps once one person had entered the PIN.
 
     Fails CLOSED: a device without a PIN file is not provisioned yet, so the
     wizard refuses instead of opening every gated step. Until 2.12.7 a missing
@@ -112,9 +116,8 @@ def _check_pin_verified(hass: HomeAssistant) -> web.Response | None:
             },
             status=403,
         )
-    state = _get_state(hass)
-    if state.get("pin_verified"):
-        return None  # Already verified
+    if session_valid(hass, request):
+        return None
     return web.json_response({"error": "PIN verification required"}, status=403)
 
 
@@ -223,9 +226,8 @@ class GAPinVerifyView(HomeAssistantView):
         state = _get_state(hass)
         store = _get_store(hass)
 
-        # Already verified — idempotent
-        if state.get("pin_verified"):
-            return self.json({"status": "ok"})
+        # No "already verified" shortcut (F2, 2.12.13): the proof belongs to a
+        # browser session, not to the device. Everyone proves the PIN themselves.
 
         # Check rate limit
         locked_until = state.get("pin_locked_until")
@@ -266,7 +268,9 @@ class GAPinVerifyView(HomeAssistantView):
             state["pin_locked_until"] = None
             await store.async_save(state)
             _LOGGER.info("Onboarding PIN verified successfully")
-            return self.json({"status": "ok"})
+            response = self.json({"status": "ok"})
+            set_session_cookie(response, create_session(hass))
+            return response
 
         # Failure — increment attempts with exponential backoff
         attempts = state.get("pin_attempts", 0) + 1

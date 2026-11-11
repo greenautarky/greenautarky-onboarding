@@ -28,7 +28,7 @@ from aiohttp import web
 
 
 def redirect_keeping_query(
-    request: web.Request, target: str, **extra: str
+    request: web.Request, target: str, *, drop: tuple[str, ...] = (), **extra: str
 ) -> web.HTTPFound:
     """``HTTPFound`` to *target*, carrying the request's query along.
 
@@ -36,6 +36,9 @@ def redirect_keeping_query(
     route that redirects to ``?join=1`` means it, and a caller must not be able
     to turn that off by sending ``?join=0``. ``extra`` wins over both and is
     where a handler adds something it computed.
+
+    ``drop`` names incoming keys that must NOT be forwarded (2.12.13: the
+    device PIN never rides in a Location header).
 
     Order is preserved and duplicate keys survive, because a query is a list of
     pairs, not a mapping — dropping duplicates silently is how a filter loses
@@ -45,7 +48,7 @@ def redirect_keeping_query(
     incoming = parse_qsl(request.query_string, keep_blank_values=True)
     own = parse_qsl(parts.query, keep_blank_values=True)
     fixed = {k for k, _ in own} | set(extra)
-    merged = [(k, v) for k, v in incoming if k not in fixed] + own
+    merged = [(k, v) for k, v in incoming if k not in fixed and k not in drop] + own
     merged += list(extra.items())
     return web.HTTPFound(
         urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(merged), parts.fragment))

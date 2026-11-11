@@ -33,6 +33,16 @@ from greenautarky_site.onboarding.password_reset import (
 )
 
 PIN = "123456"
+
+
+@pytest.fixture(autouse=True)
+def _reset_enabled(monkeypatch):
+    """These tests pin the reset LOGIC for when a second factor re-enables it.
+    The shipped default (disabled, F3a) is pinned in test_pin_only_reset_disabled.py."""
+    from greenautarky_site.onboarding import password_reset
+
+    monkeypatch.setattr(password_reset, "PIN_ONLY_RESET_ENABLED", True)
+
 OLD_PW = "old-password-1"
 NEW_PW = "new-password-2"
 

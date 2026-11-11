@@ -77,4 +77,4 @@ def pin_not_under_test(monkeypatch):
     """
     from greenautarky_site.onboarding import wizard as wizard_module
 
-    monkeypatch.setattr(wizard_module, "_check_pin_verified", lambda _hass: None)
+    monkeypatch.setattr(wizard_module, "_check_pin_verified", lambda _hass, _request=None: None)
