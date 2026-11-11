@@ -37,6 +37,7 @@ from ..locale_defaults import async_apply_resident_locale_defaults
 from ..redirects import redirect_keeping_query
 from ..store import _async_get_hass_provider, _get_state, _get_store
 from .pin import _check_pin_verified, _pin_required
+from .session import clear_sessions, session_valid, throttle
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -182,7 +183,7 @@ async def _async_recorded_account_hint(hass: HomeAssistant, state: dict) -> str 
 RUN_ACCOUNT_KEY = "onboarding_run_account_id"
 
 
-async def _async_replaceable_run_account(hass: HomeAssistant, state: dict):
+async def _async_replaceable_run_account(hass: HomeAssistant, state: dict, request: web.Request):
     """The user a PIN-verified resident may replace, else None.
 
     Replacement (Odoo #1695, decided 2026-11-09): before ``complete`` no data
@@ -201,7 +202,7 @@ async def _async_replaceable_run_account(hass: HomeAssistant, state: dict):
     * the user still exists, is active, and is not an owner, admin or system
       user.
     """
-    if state.get("completed") or state.get("pin_verified") is not True:
+    if state.get("completed") or not session_valid(hass, request):
         return None
     if not _pin_required(hass):
         return None
@@ -348,8 +349,8 @@ class GAOnboardingPageView(HomeAssistantView):
         # carries ?pin=&device=, and this route is one of the two the sweep of
         # 2026-09-22 found still dropping it (see redirects.py).
         if state.get("completed"):
-            raise redirect_keeping_query(request, "/")
-        raise redirect_keeping_query(request, "/greenautarky-setup.html")
+            raise redirect_keeping_query(request, "/", drop=("pin",))
+        raise redirect_keeping_query(request, "/greenautarky-setup.html", drop=("pin",))
 
 
 class GAAdminBypassView(HomeAssistantView):
@@ -420,6 +421,14 @@ class GAAdminBypassView(HomeAssistantView):
         return response
 
 
+#: The ONLY persisted-state keys the anonymous status view may return. Pinned
+#: by tests/test_login_flow_2_12_13.py::test_status_returns_only_the_allow_listed_fields. Derived from the wizard bundle's reads
+#: (`pin_required`, `pin_verified`) and ga-onboarding-redirect.js (`completed`);
+#: `tenant_mode`, `gdpr_accepted`, `steps_done` are read by fleet tooling
+#: (e2e WIZ-03, ga-onboarding.py).
+STATUS_FIELDS = ("completed", "tenant_mode", "gdpr_accepted", "steps_done")
+
+
 class GAOnboardingStatusView(HomeAssistantView):
     """Return current onboarding status."""
 
@@ -431,7 +440,11 @@ class GAOnboardingStatusView(HomeAssistantView):
         """Return onboarding status including PIN verification state."""
         hass: HomeAssistant = request.app["hass"]
         state = _get_state(hass)
-        response = {**state}
+        # ALLOW-LIST, never `{**state}` (F4, 2.12.13): the persisted state also
+        # holds invite hashes, user ids, consent timestamps and lockout timers,
+        # and this view is anonymous. Only what the wizard and the redirect
+        # script read leaves the device.
+        response = {k: state[k] for k in STATUS_FIELDS if k in state}
 
         # Admin bypass cookie: report completed=true so authorize.ts (client-side)
         # skips the GA onboarding redirect and shows the normal HA login.
@@ -445,13 +458,9 @@ class GAOnboardingStatusView(HomeAssistantView):
         # refusal one step later with nothing to enter.
         response["pin_required"] = True
         response["pin_provisioned"] = _pin_required(hass)
-        response["pin_verified"] = state.get("pin_verified", False)
-        locked_until = state.get("pin_locked_until")
-        if locked_until:
-            remaining = (
-                datetime.fromisoformat(locked_until) - datetime.now(UTC)
-            ).total_seconds()
-            response["pin_retry_after"] = max(0, int(remaining))
+        # Per browser session, not per device (F2): "someone verified" is not
+        # something to tell an anonymous caller.
+        response["pin_verified"] = session_valid(hass, request)
 
         return self.json(response)
 
@@ -468,7 +477,7 @@ class GAOnboardingGDPRView(HomeAssistantView):
         hass: HomeAssistant = request.app["hass"]
         if err := _check_not_completed(hass):
             return err
-        if err := _check_pin_verified(hass):
+        if err := _check_pin_verified(hass, request):
             return err
 
         state = _get_state(hass)
@@ -603,7 +612,7 @@ class GAOnboardingTelemetryView(HomeAssistantView):
         hass: HomeAssistant = request.app["hass"]
         if err := _check_not_completed(hass):
             return err
-        if err := _check_pin_verified(hass):
+        if err := _check_pin_verified(hass, request):
             return err
 
         state = _get_state(hass)
@@ -663,7 +672,7 @@ class GAOnboardingEthernetView(HomeAssistantView):
         hass: HomeAssistant = request.app["hass"]
         if err := _check_not_completed(hass):
             return err
-        if err := _check_pin_verified(hass):
+        if err := _check_pin_verified(hass, request):
             return err
 
         state = _get_state(hass)
@@ -721,7 +730,7 @@ class GAOnboardingCompleteView(HomeAssistantView):
         # (measured on a bench device, 2026-09-16). Telemetry and Ethernet got
         # the same gate: they record consents, and a consent nobody proved
         # physical access for is not one.
-        if err := _check_pin_verified(hass):
+        if err := _check_pin_verified(hass, request):
             return err
         # The PIN says someone stood at the device. It does not say the wizard
         # was walked. See _check_account_exists.
@@ -767,7 +776,7 @@ class GAOnboardingCreateUserView(HomeAssistantView):
         hass: HomeAssistant = request.app["hass"]
         if err := _check_not_completed(hass):
             return err
-        if err := _check_pin_verified(hass):
+        if err := _check_pin_verified(hass, request):
             return err
 
         body = await request.json()
@@ -837,8 +846,10 @@ class GAOnboardingCreateUserView(HomeAssistantView):
             hint = await _async_recorded_account_hint(hass, _get_state(hass))
             if hint is not None:
                 run_state = _get_state(hass)
-                replaceable = await _async_replaceable_run_account(hass, run_state)
+                replaceable = await _async_replaceable_run_account(hass, run_state, request)
                 if body.get("replace_account") is True and replaceable is not None:
+                    if err := throttle(hass, "replace", limit=3, window_s=600):
+                        return err
                     # Explicit request from a PIN-verified run (see
                     # _async_replaceable_run_account): the old account goes.
                     await _async_delete_run_account(hass, provider, run_state, replaceable)
@@ -863,6 +874,8 @@ class GAOnboardingCreateUserView(HomeAssistantView):
                     status=409,
                 )
         if state != "absent":
+            if err := throttle(hass, "adopt", limit=5, window_s=600):
+                return err
             # Adopting an account — or healing a half-created one — means handing
             # out an auth_code for it, so the password has to be checked FIRST.
             # Without this, everyone who gets past the physical PIN could sign in
@@ -1078,7 +1091,8 @@ class GAOnboardingResetView(HomeAssistantView):
         state["gdpr_accepted"] = False
         state["steps_done"] = []
         state["consents"] = {}
-        state["pin_verified"] = False
+        state.pop("pin_verified", None)  # legacy persisted flag, no longer used
+        clear_sessions(hass)  # every browser must prove the PIN again
         state.pop(RUN_ACCOUNT_KEY, None)
         try:
             await store.async_save(state)

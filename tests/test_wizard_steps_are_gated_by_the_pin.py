@@ -29,6 +29,7 @@ import pytest
 
 from greenautarky_site.const import DOMAIN
 from greenautarky_site.onboarding import pin as pin_module
+from greenautarky_site.onboarding.session import SESSION_COOKIE, create_session
 from greenautarky_site.onboarding.wizard import (
     GAOnboardingCompleteView,
     GAOnboardingEthernetView,
@@ -48,6 +49,7 @@ class _FakeRequest:
     def __init__(self, hass, body=None) -> None:
         self.app = {"hass": hass}
         self._body = body or {}
+        self.cookies: dict[str, str] = {}
 
     async def json(self) -> dict[str, Any]:
         return self._body
@@ -97,7 +99,9 @@ async def test_complete_still_works_once_the_pin_is_verified(hass, monkeypatch):
     # Nor is the consent (Odoo #1004): record it so that gate cannot mask this one.
     st["consents"]["gdpr"] = {"version": 1, "accepted_at": "2026-11-09T00:00:00+00:00"}
 
-    resp = await GAOnboardingCompleteView().post(_FakeRequest(hass, {}))
+    req = _FakeRequest(hass, {})
+    req.cookies[SESSION_COOKIE] = create_session(hass)
+    resp = await GAOnboardingCompleteView().post(req)
 
     assert resp.status == 200
     assert st["completed"] is True

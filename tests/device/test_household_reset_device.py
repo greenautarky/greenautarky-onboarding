@@ -213,10 +213,11 @@ async def test_confirmation_phrase_is_required() -> None:
 
 
 @requires_device
-async def test_a_wrong_pin_is_refused_despite_the_sticky_flag() -> None:
-    """The regression this feature must never have. On an onboarded device
-    ``pin_verified`` is true forever; gating on it would let any master
-    session wipe the home without touching the sticker."""
+async def test_a_wrong_pin_is_refused_despite_a_verified_session() -> None:
+    """The regression this feature must never have. A browser that proved the
+    PIN holds a wizard session; gating the wipe on that would let any master
+    session wipe the home without touching the sticker (2.12.13: the proof is
+    per session, and the wipe re-checks the PIN itself)."""
     _require_pin()
     aiohttp = pytest.importorskip("aiohttp")
     async with aiohttp.ClientSession() as session:
@@ -224,10 +225,17 @@ async def test_a_wrong_pin_is_refused_despite_the_sticky_flag() -> None:
              f"Bearer {await _login(session, MASTER_USERNAME, MASTER_PASSWORD)}"}
 
         async with session.get(f"{DEVICE_URL}/api/greenautarky_site/status") as r:
-            assert (await r.json()).get("pin_verified") is True, (
-                "device is not in the state this test is about — it only "
-                "means something once onboarding has set the sticky flag"
+            assert (await r.json()).get("pin_verified") is False, (
+                "anonymous status must not report a verified PIN (session-bound)"
             )
+        # Establish the strongest precondition: this client HAS a wizard
+        # session. (On an onboarded device verify_pin answers 403 "already
+        # completed" and sets no session; either way the wipe must still
+        # demand the PIN itself.)
+        pin = _require_pin()
+        async with session.post(f"{DEVICE_URL}/api/greenautarky_site/verify_pin",
+                                json={"pin": pin}) as r:
+            assert r.status in (200, 403), r.status
 
         st, body = await _post(session, h, "site_reset/request",
                                {"confirm": "LÖSCHEN", "pin": "000000"})

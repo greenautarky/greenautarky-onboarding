@@ -60,6 +60,7 @@ import pytest
 from homeassistant.setup import async_setup_component
 
 from greenautarky_site.const import DOMAIN
+from greenautarky_site.onboarding.session import SESSION_COOKIE, create_session
 from greenautarky_site.onboarding.wizard import GAOnboardingCreateUserView
 
 # The PIN is not the subject of this file (fail-closed gate since 2.12.8).
@@ -79,6 +80,9 @@ class _FakeRequest:
         self.app = {"hass": hass}
         self._body = body or {}
         self._items: dict[str, Any] = {}
+        self.cookies = (
+            {SESSION_COOKIE: hass.data["_test_sid"]} if "_test_sid" in hass.data else {}
+        )
 
     async def json(self) -> dict[str, Any]:
         return self._body
@@ -126,6 +130,7 @@ def _seed(hass) -> dict:
         "pin_verified_at": "2999-01-01T00:00:00+00:00",
     }
     hass.data[DOMAIN] = {"store": _FakeStore(), "state": st}
+    hass.data["_test_sid"] = create_session(hass)
     return st
 
 

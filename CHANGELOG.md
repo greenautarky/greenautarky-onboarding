@@ -1,3 +1,16 @@
+## 2.12.13
+
+Login-flow hardening (internal review 2026-11-11). The sticker PIN stays permanent by design (it is printed on the device label), so its protection comes from the session binding (F2), no PIN-only reset (F3a) and the lockout/rate limits - not from rotation.
+
+- **F2: the PIN proof belongs to the browser that gave it.**
+  Before: one correct PIN set a device-wide flag, and every client could then drive the account, consent, telemetry, Ethernet and finish steps. After: `verify_pin` hands that browser a random session in an httponly cookie (30 min idle timeout, renewed by each gated request, 2 h hard cap; kept server-side only as a hash, in memory; the persisted `pin_verified` flag is gone); every wizard POST needs it, a restart or a wizard reset ends all sessions, and `verify_pin` is no longer idempotent for other clients. `status.pin_verified` reports the caller's own session. Account adopt and replace are throttled per device (adopt 5 / 10 min, replace 3 / 10 min, then 429). `/admin` bypass unchanged.
+- **F3a: PIN-only password reset is switched off over HTTP.**
+  Before: the PIN alone reset any tenant password. After: `password_reset` and `password_reset/users` answer 403 `password_reset_disabled` ("contact support"); the reset page shows that text. Interim until the support-code reset lands (`PIN_ONLY_RESET_ENABLED`).
+- **F3c: the PIN no longer travels in the URL.**
+  Before: a label QR (`?pin=`) was forwarded through redirects and auto-filled and submitted by the wizard. After: redirects drop `pin` (`device` is kept), the wizard does not read it outside the sub-user invite link, and a printed QR simply opens the wizard. The committed setup bundle is patched in place (frontend source archived; noted in BUILD-INFO).
+- **F4: `GET /api/greenautarky_site/status` is an allow-list.**
+  Before: the whole persisted state, including sub-user invite hashes, user ids and lockout timers. After: `completed`, `tenant_mode`, `gdpr_accepted`, `steps_done`, `pin_required`, `pin_provisioned`, `pin_verified` only. Sub-user invite PINs are stored salted with scrypt (never the plain sha256); existing invites are migrated on load and keep working.
+
 ## 2.12.12
 
 - **`/admin` now really gets an admin past a pending onboarding.**
