@@ -311,9 +311,13 @@ async def _async_setup_common(hass: HomeAssistant) -> bool:
     # 2.12.13: invite PINs move from unsalted sha256 to a salted slow hash.
     from .household.sub_users import migrate_invites
 
-    if migrate_invites(state):
+    changed = migrate_invites(state)
+    # The persisted `pin_verified` flag is dead since 2.12.13 (the proof is a
+    # per-browser session); drop it from upgraded state.
+    changed = (state.pop("pin_verified", None) is not None) or changed
+    if changed:
         await store.async_save(state)
-        _LOGGER.info("sub-user invites migrated to the salted slow hash")
+        _LOGGER.info("onboarding state migrated (invite hashes / legacy PIN flag)")
 
     hass.data[DOMAIN] = {"store": store, "state": state}
 

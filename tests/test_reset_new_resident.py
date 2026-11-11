@@ -127,7 +127,7 @@ async def test_reset_clears_pin_verified_and_a_gated_step_refuses_again(hass, mo
     sid = create_session(hass)  # the previous resident's browser session
     await GAOnboardingResetView().post(_FakeRequest(hass, user=_User(True)))
 
-    assert st["pin_verified"] is False
+    assert "pin_verified" not in st
     req = _FakeRequest(hass, {"accepted": True})
     req.cookies = {SESSION_COOKIE: sid}  # the OLD session must be dead after reset
     resp = await GAOnboardingGDPRView().post(req)
@@ -156,7 +156,7 @@ async def test_reset_on_a_device_without_telemetry_still_works(hass, monkeypatch
 
     assert resp.status == 200
     assert json.loads(resp.body)["telemetry_reset"] == "absent"
-    assert st["completed"] is False and st["pin_verified"] is False
+    assert st["completed"] is False and "pin_verified" not in st
 
 
 async def test_an_old_telemetry_component_is_a_loud_error_and_changes_nothing(

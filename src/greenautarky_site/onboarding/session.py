@@ -24,7 +24,8 @@ from homeassistant.core import HomeAssistant
 from ..const import DOMAIN
 
 SESSION_COOKIE = "ga_wizard_session"
-SESSION_TTL_S = 30 * 60
+SESSION_TTL_S = 30 * 60  # idle timeout, renewed by every valid gated request
+SESSION_MAX_LIFETIME_S = 2 * 60 * 60  # hard cap from creation, never renewed
 
 _SESSIONS_KEY = "wizard_sessions"
 _THROTTLE_KEY = "wizard_throttle"
@@ -39,7 +40,8 @@ def _digest(session_id: str) -> str:
 
 
 def _prune(sessions: dict, now: float) -> None:
-    for k in [k for k, exp in sessions.items() if exp <= now]:
+    # value = (idle expiry, hard expiry)
+    for k in [k for k, (idle, hard) in sessions.items() if idle <= now or hard <= now]:
         del sessions[k]
 
 
@@ -49,19 +51,29 @@ def create_session(hass: HomeAssistant) -> str:
     now = time.time()
     _prune(sessions, now)
     sid = secrets.token_urlsafe(32)
-    sessions[_digest(sid)] = now + SESSION_TTL_S
+    sessions[_digest(sid)] = (now + SESSION_TTL_S, now + SESSION_MAX_LIFETIME_S)
     return sid
 
 
-def session_valid(hass: HomeAssistant, request: web.Request) -> bool:
-    """True iff the request carries a live wizard session cookie."""
+def session_valid(hass: HomeAssistant, request: web.Request, *, renew: bool = False) -> bool:
+    """True iff the request carries a live wizard session cookie.
+
+    ``renew=True`` (the gated steps) slides the idle expiry forward, capped at
+    the session's hard lifetime. Read-only callers (status) never renew.
+    """
     sid = getattr(request, "cookies", {}).get(SESSION_COOKIE)
     if not sid:
         return False
     sessions = _bucket(hass, _SESSIONS_KEY)
     now = time.time()
     _prune(sessions, now)
-    return _digest(sid) in sessions
+    key = _digest(sid)
+    if key not in sessions:
+        return False
+    if renew:
+        _idle, hard = sessions[key]
+        sessions[key] = (min(now + SESSION_TTL_S, hard), hard)
+    return True
 
 
 def clear_sessions(hass: HomeAssistant) -> None:
@@ -72,7 +84,7 @@ def set_session_cookie(response: web.Response, sid: str) -> None:
     response.set_cookie(
         SESSION_COOKIE,
         sid,
-        max_age=SESSION_TTL_S,
+        max_age=SESSION_MAX_LIFETIME_S,  # the server enforces idle + hard limits
         httponly=True,
         samesite="Strict",
         path="/",

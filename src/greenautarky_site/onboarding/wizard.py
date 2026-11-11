@@ -422,7 +422,7 @@ class GAAdminBypassView(HomeAssistantView):
 
 
 #: The ONLY persisted-state keys the anonymous status view may return. Pinned
-#: by tests/test_status_allow_list.py. Derived from the wizard bundle's reads
+#: by tests/test_login_flow_2_12_13.py::test_status_returns_only_the_allow_listed_fields. Derived from the wizard bundle's reads
 #: (`pin_required`, `pin_verified`) and ga-onboarding-redirect.js (`completed`);
 #: `tenant_mode`, `gdpr_accepted`, `steps_done` are read by fleet tooling
 #: (e2e WIZ-03, ga-onboarding.py).
@@ -1091,7 +1091,7 @@ class GAOnboardingResetView(HomeAssistantView):
         state["gdpr_accepted"] = False
         state["steps_done"] = []
         state["consents"] = {}
-        state["pin_verified"] = False
+        state.pop("pin_verified", None)  # legacy persisted flag, no longer used
         clear_sessions(hass)  # every browser must prove the PIN again
         state.pop(RUN_ACCOUNT_KEY, None)
         try:

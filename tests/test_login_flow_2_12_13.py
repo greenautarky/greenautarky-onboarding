@@ -92,7 +92,7 @@ async def test_pin_proof_belongs_to_the_browser_that_gave_it(hass, hass_client_n
     resp = await _verify(alice)
     assert resp.status == 200
     cookie = resp.cookies[SESSION_COOKIE]
-    assert cookie["httponly"] and cookie["max-age"] == "1800"
+    assert cookie["httponly"] and cookie["max-age"] == "7200"
 
     # Alice's session passes the gate (the step answers something other than 403
     # 'PIN verification required'; the GDPR step itself succeeds).
@@ -264,3 +264,92 @@ def test_invite_pin_is_stored_salted_and_slow_and_old_records_migrate():
     assert migrate_invites(state) is False  # idempotent
     # The stored value is not derivable by a plain sha256 of the PIN.
     assert _slow_hash(bytes.fromhex(a["pin_salt"]), _hash_invite_pin("ZZZZZZZZ")) != a["pin_hash"]
+
+
+# ------------------------------------------------- migration via real setup --
+
+
+async def test_setup_migrates_stored_invites_and_drops_the_legacy_pin_flag(hass, hass_storage):
+    """Through the REAL setup path (`async_setup` -> `_async_setup_common` ->
+    Store load), not by calling migrate_invites directly: a stored device that
+    still holds an unsalted `pin_sha256` invite must come out salted, persisted,
+    and the invite must still work."""
+    from unittest.mock import MagicMock, patch
+
+    from greenautarky_site import async_setup
+    from greenautarky_site.const import STORAGE_KEY
+
+    pin = "ABCDEFGH"
+    hass_storage[STORAGE_KEY] = {
+        "version": 2, "minor_version": 1, "key": STORAGE_KEY,
+        "data": {
+            "completed": True, "consents": {"gdpr": {"version": 1}},
+            "pin_verified": True,
+            "sub_user_invites": [{
+                "pin_sha256": _hash_invite_pin(pin), "master_user_id": "m",
+                "exp": "2999-01-01T00:00:00+00:00",
+            }],
+        },
+    }
+    if not hasattr(hass, "http") or hass.http is None:
+        hass.http = MagicMock()
+    with (
+        patch("greenautarky_site._async_register_frontend_bundle", return_value=None),
+        patch("greenautarky_site._async_register_panel", return_value=None),
+        patch("greenautarky_site._register_redirect_js", return_value=None),
+        patch("greenautarky_site._patch_index_view_for_wizard_redirect", return_value=None),
+    ):
+        assert await async_setup(hass, {DOMAIN: {}}) is True
+    await hass.async_block_till_done()
+
+    for where in (hass.data[DOMAIN]["state"], hass_storage[STORAGE_KEY]["data"]):
+        (inv,) = where["sub_user_invites"]
+        assert "pin_sha256" not in inv, "legacy invite hash survived setup"
+        assert _invite_matches(inv, pin)
+        assert "pin_verified" not in where
+    assert "pin_verified" not in hass.data[DOMAIN]["state"]
+
+
+# --------------------------------------------------------- sliding session --
+
+
+async def test_session_slides_while_used_and_is_capped(hass, hass_client_no_auth, monkeypatch):
+    await _stack(hass, hass_client_no_auth)
+    client = await hass_client_no_auth()
+    assert (await _verify(client)).status == 200
+    t0 = time.time()
+    clock = {"now": t0}
+    monkeypatch.setattr(session_module.time, "time", lambda: clock["now"])
+
+    async def gated():
+        return (await client.post(f"{PREFIX}/gdpr", json={"accepted": True})).status
+
+    # Active use every 20 min keeps the session alive well past 30 minutes ...
+    for minutes in (20, 40, 60, 80, 100):
+        clock["now"] = t0 + minutes * 60
+        assert await gated() == 200, f"session died while in use at +{minutes} min"
+    # ... a read-only status poll does NOT renew ...
+    clock["now"] = t0 + 110 * 60
+    await client.get(f"{PREFIX}/status")
+    clock["now"] = t0 + 131 * 60
+    assert await gated() == 403  # past the 2 h hard cap (and idle > 30 min)
+
+    # Idle expiry: a fresh session unused for > 30 min is gone.
+    clock["now"] = t0 + 200 * 60
+    assert (await _verify(client)).status == 200
+    clock["now"] = t0 + 200 * 60 + 31 * 60
+    assert await gated() == 403
+
+
+async def test_hard_cap_holds_even_with_constant_use(hass, hass_client_no_auth, monkeypatch):
+    await _stack(hass, hass_client_no_auth)
+    client = await hass_client_no_auth()
+    assert (await _verify(client)).status == 200
+    t0 = time.time()
+    clock = {"now": t0}
+    monkeypatch.setattr(session_module.time, "time", lambda: clock["now"])
+    for minutes in range(10, 120, 10):
+        clock["now"] = t0 + minutes * 60
+        assert (await client.post(f"{PREFIX}/gdpr", json={"accepted": True})).status == 200
+    clock["now"] = t0 + 121 * 60
+    assert (await client.post(f"{PREFIX}/gdpr", json={"accepted": True})).status == 403
