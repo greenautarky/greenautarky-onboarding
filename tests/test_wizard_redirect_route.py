@@ -61,7 +61,7 @@ def _fake_hass(view: IndexView, *, completed: bool) -> SimpleNamespace:
 
 async def _handler_response(view: IndexView):
     handler = view._route.handler
-    return handler, await handler(SimpleNamespace())
+    return handler, await handler(SimpleNamespace(cookies={}))
 
 
 async def test_redirect_fires_when_the_route_was_cached_before_the_patch(
@@ -88,7 +88,7 @@ async def test_redirect_fires_when_the_route_was_cached_before_the_patch(
         "class patch never reached the live route, so `/` serves Home "
         "Assistant and the label QR code misses the wizard"
     )
-    response = await handler(SimpleNamespace())
+    response = await handler(SimpleNamespace(cookies={}))
     assert response.status == 302
     assert response.headers["location"] == SETUP_PATH
 
@@ -135,7 +135,7 @@ async def test_completed_wizard_falls_through_to_home_assistant(
 
     _patch_index_view_for_wizard_redirect(hass)
 
-    response = await view._route.handler(SimpleNamespace())
+    response = await view._route.handler(SimpleNamespace(cookies={}))
     assert reached, (
         "a completed wizard must fall through to Home Assistant's own handler — "
         "the patch short-circuited instead, which would push every provisioned "
@@ -171,7 +171,7 @@ def _pending_view():
 
 
 async def _location(view: IndexView, query: dict) -> str:
-    response = await view._route.handler(SimpleNamespace(query=query))
+    response = await view._route.handler(SimpleNamespace(query=query, cookies={}))
     return response.headers["location"]
 
 
@@ -212,3 +212,69 @@ async def test_forwarded_values_are_encoded_not_pasted(unpatched_index_view):
     """Whatever arrived is re-encoded, never concatenated raw."""
     location = await _location(_pending_view(), {"device": "KIB SON/39"})
     assert location == f"{SETUP_PATH}?device=KIB+SON%2F39"
+
+
+# --- Admin bypass cookie (Odoo #1888) ------------------------------------------
+#
+# GET /admin sets `ga_bypass=1`; the post-login OAuth return (/config?code=...)
+# is an IndexView hit that must reach Home Assistant while onboarding is pending.
+
+
+def _cookie_request(cookies: dict) -> SimpleNamespace:
+    return SimpleNamespace(query={}, cookies=cookies)
+
+
+async def _patched_with_core_stub(completed: bool):
+    view = IndexView(None, None)  # type: ignore[arg-type]
+    hass = _fake_hass(view, completed=completed)
+    view.hass = hass  # type: ignore[assignment]
+    reached: list[object] = []
+
+    async def _core_handler(self, request):
+        reached.append(request)
+        return web.Response(status=200, text="home assistant")
+
+    IndexView.get = _core_handler  # type: ignore[method-assign]
+    _patch_index_view_for_wizard_redirect(hass)
+    return view, reached
+
+
+async def test_bypass_cookie_reaches_home_assistant_while_pending(
+    unpatched_index_view,
+):
+    view, reached = await _patched_with_core_stub(completed=False)
+    response = await view._route.handler(_cookie_request({"ga_bypass": "1"}))
+    assert reached and response.status == 200
+
+
+async def test_no_cookie_pending_still_redirects_to_wizard(unpatched_index_view):
+    view, reached = await _patched_with_core_stub(completed=False)
+    response = await view._route.handler(_cookie_request({}))
+    assert not reached
+    assert response.status == 302
+    assert response.headers["location"] == SETUP_PATH
+
+
+async def test_wrong_cookie_value_does_not_bypass(unpatched_index_view):
+    view, reached = await _patched_with_core_stub(completed=False)
+    response = await view._route.handler(_cookie_request({"ga_bypass": "0"}))
+    assert not reached and response.status == 302
+
+
+async def test_completed_goes_to_home_assistant_without_cookie(unpatched_index_view):
+    view, reached = await _patched_with_core_stub(completed=True)
+    response = await view._route.handler(_cookie_request({}))
+    assert reached and response.status == 200
+
+
+async def test_admin_sets_httponly_bypass_cookie():
+    from greenautarky_site.onboarding.wizard import GAAdminBypassView
+
+    request = SimpleNamespace(scheme="http", host="dev.local")
+    response = await GAAdminBypassView().get(request)  # type: ignore[arg-type]
+    assert response.status == 302
+    assert response.headers["location"].startswith("/auth/authorize?")
+    morsel = response.cookies["ga_bypass"]
+    assert morsel.value == "1"
+    assert morsel["httponly"] is True
+    assert morsel["max-age"] == "3600"

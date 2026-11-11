@@ -1,3 +1,16 @@
+## 2.12.12
+
+- **`/admin` now really gets an admin past a pending onboarding.**
+  Before: `GET /admin` set the `ga_bypass=1` cookie and the status endpoint honoured it, but
+  the server-side `IndexView.get` patch redirected every frontend route to the wizard while
+  `completed=false` without looking at the cookie. Result: `/admin` -> HA login OK -> OAuth
+  return `/config?code=...` -> 302 to the wizard; an admin could not get in while onboarding
+  was pending. After: with the `ga_bypass=1` cookie the patch hands over to Home Assistant's
+  own handler. Without the cookie nothing changes (pending -> wizard, completed -> HA). The
+  cookie stays httponly, 1 h, and grants nothing on its own: IndexView serves only the
+  frontend shell, API and websocket calls still need a HA token. Docstring of `/admin`
+  corrected. No wizard bundle change.
+
 ## 2.12.11
 
 (Unreleased when amended: review rounds 2 and 3 stay inside this version, no tag or release exists.)

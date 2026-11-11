@@ -823,6 +823,12 @@ def _patch_index_view_for_wizard_redirect(hass: HomeAssistant) -> None:
 
     @wraps(original_get)
     async def patched_get(self, request: web.Request) -> web.Response:
+        # Admin bypass: GET /admin sets ga_bypass=1 so the post-login OAuth
+        # return (/config?code=...) reaches HA instead of the wizard. The
+        # cookie grants nothing by itself: IndexView only serves the frontend
+        # shell; every API/websocket call still needs a HA token.
+        if request.cookies.get("ga_bypass") == "1":
+            return await original_get(self, request)
         state = _get_state(hass) or {}
         if not state.get("completed", False):
             return web.Response(
