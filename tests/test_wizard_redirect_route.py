@@ -278,3 +278,37 @@ async def test_admin_sets_httponly_bypass_cookie():
     assert morsel.value == "1"
     assert morsel["httponly"] is True
     assert morsel["max-age"] == "3600"
+
+
+# --- Bypass over the frontend routes (Odoo #1888 guard) -------------------------
+
+_FRONTEND_ROUTES = [
+    ("/", {}),
+    ("/config", {}),
+    ("/config", {"code": "x", "auth_callback": "1"}),
+    ("/lovelace", {}),
+]
+
+
+@pytest.mark.parametrize(("path", "query"), _FRONTEND_ROUTES)
+async def test_bypass_cookie_is_honoured_on_every_frontend_route(
+    unpatched_index_view, path, query
+):
+    """Pending onboarding + ga_bypass=1 -> Home Assistant's own handler."""
+    view, reached = await _patched_with_core_stub(completed=False)
+    request = SimpleNamespace(path=path, query=query, cookies={"ga_bypass": "1"})
+    response = await view._route.handler(request)
+    assert reached and response.status == 200, f"{path}: cookie did not bypass"
+
+
+@pytest.mark.parametrize(("path", "query"), _FRONTEND_ROUTES)
+async def test_no_cookie_is_redirected_on_every_frontend_route(
+    unpatched_index_view, path, query
+):
+    """Pending onboarding, no cookie -> 302 to the wizard, core never reached."""
+    view, reached = await _patched_with_core_stub(completed=False)
+    request = SimpleNamespace(path=path, query=query, cookies={})
+    response = await view._route.handler(request)
+    assert not reached, f"{path}: core handler reached without the cookie"
+    assert response.status == 302
+    assert response.headers["location"].startswith(SETUP_PATH)
