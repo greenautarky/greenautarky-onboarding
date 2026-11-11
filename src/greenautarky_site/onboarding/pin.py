@@ -20,6 +20,7 @@ from homeassistant.core import HomeAssistant
 
 from ..const import PIN_FILE, PIN_FILE_LEGACY, PIN_MAX_DELAY
 from ..store import _get_state, _get_store
+from .session import create_session, session_valid, set_session_cookie
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -93,8 +94,11 @@ def _pin_required(hass: HomeAssistant) -> bool:
     return _pin_file_path(hass).exists()
 
 
-def _check_pin_verified(hass: HomeAssistant) -> web.Response | None:
-    """Return 403 unless the sticker PIN has been verified.
+def _check_pin_verified(hass: HomeAssistant, request: web.Request) -> web.Response | None:
+    """Return 403 unless THIS browser session has verified the sticker PIN.
+
+    Session-bound since 2.12.13 (F2): a global "someone verified" flag let any
+    client drive the gated steps once one person had entered the PIN.
 
     Fails CLOSED: a device without a PIN file is not provisioned yet, so the
     wizard refuses instead of opening every gated step. Until 2.12.7 a missing
@@ -112,9 +116,8 @@ def _check_pin_verified(hass: HomeAssistant) -> web.Response | None:
             },
             status=403,
         )
-    state = _get_state(hass)
-    if state.get("pin_verified"):
-        return None  # Already verified
+    if session_valid(hass, request, renew=True):
+        return None
     return web.json_response({"error": "PIN verification required"}, status=403)
 
 
@@ -124,11 +127,10 @@ async def async_verify_pin_fresh(
     """Re-check the sticker PIN right now. Returns None on success, else a
     ready error response.
 
-    ``_check_pin_verified`` is deliberately NOT usable for this: it reads
-    ``state["pin_verified"]``, a sticky flag that stays true forever once
-    onboarding is done. That is right for the wizard and useless as a gate on
-    a destructive post-onboarding action — it would wave through anyone with a
-    master session. This re-reads the file and compares the submitted PIN, so
+    ``_check_pin_verified`` is deliberately NOT usable for this: it proves a
+    wizard browser session (expires with the session), not physical access at
+    the moment of a destructive post-onboarding action, and it would wave
+    through anyone holding such a session. This re-reads the file and compares the submitted PIN, so
     the caller proves physical access at the moment they ask.
 
     ``scope`` namespaces the backoff counters, so a fumbled reset PIN cannot
@@ -223,9 +225,8 @@ class GAPinVerifyView(HomeAssistantView):
         state = _get_state(hass)
         store = _get_store(hass)
 
-        # Already verified — idempotent
-        if state.get("pin_verified"):
-            return self.json({"status": "ok"})
+        # No "already verified" shortcut (F2, 2.12.13): the proof belongs to a
+        # browser session, not to the device. Everyone proves the PIN themselves.
 
         # Check rate limit
         locked_until = state.get("pin_locked_until")
@@ -260,14 +261,15 @@ class GAPinVerifyView(HomeAssistantView):
         # Constant-time comparison to prevent timing attacks
         if hmac.compare_digest(submitted_pin.encode(), stored_pin.encode()):
             # Success
-            state["pin_verified"] = True
             if "pin" not in state.get("steps_done", []):
                 state.setdefault("steps_done", []).append("pin")
             state["pin_attempts"] = 0
             state["pin_locked_until"] = None
             await store.async_save(state)
             _LOGGER.info("Onboarding PIN verified successfully")
-            return self.json({"status": "ok"})
+            response = self.json({"status": "ok"})
+            set_session_cookie(response, create_session(hass))
+            return response
 
         # Failure — increment attempts with exponential backoff
         attempts = state.get("pin_attempts", 0) + 1

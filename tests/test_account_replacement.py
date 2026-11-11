@@ -26,6 +26,11 @@ from greenautarky_site.console_as import ACCOUNT_MARKER_KEY
 from greenautarky_site.const import DOMAIN
 from greenautarky_site.onboarding import pin as pin_module
 from greenautarky_site.onboarding import wizard as wizard_module
+from greenautarky_site.onboarding.session import (
+    SESSION_COOKIE,
+    clear_sessions,
+    create_session,
+)
 from greenautarky_site.onboarding.wizard import (
     RUN_ACCOUNT_KEY,
     GAOnboardingCreateUserView,
@@ -71,6 +76,7 @@ def run(hass, monkeypatch):
     monkeypatch.setattr(wizard_module, "_pin_required", lambda _h: True)
     st = {"completed": False, "steps_done": ["pin", "gdpr"], "consents": {}, "pin_verified": True}
     hass.data[DOMAIN] = {"store": _FakeStore(), "state": st}
+    hass.data["_test_sid"] = create_session(hass)  # this browser proved the PIN
     return st
 
 
@@ -79,7 +85,11 @@ async def _post(hass, username, name, *, replace=False, secret=THE_USUAL):
             "password": secret}
     if replace:
         body["replace_account"] = True
-    return await GAOnboardingCreateUserView().post(_FakeRequest(hass, body))
+    req = _FakeRequest(hass, body)
+    sid = hass.data.get("_test_sid")
+    if sid:
+        req.cookies[SESSION_COOKIE] = sid
+    return await GAOnboardingCreateUserView().post(req)
 
 
 def _users(hass, name):
@@ -136,7 +146,7 @@ async def test_without_the_replace_request_the_409_stays(hass, run):
 async def test_without_a_pin_verified_in_this_run_nothing_is_replaced(hass, run):
     await _auth(hass)
     await _post(hass, "one@example.invalid", "One")
-    run["pin_verified"] = False  # what a reset does
+    clear_sessions(hass)  # what a reset does
 
     resp = await _post(hass, "two@example.invalid", "Two", replace=True)
 

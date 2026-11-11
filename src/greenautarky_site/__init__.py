@@ -308,6 +308,17 @@ async def _async_setup_common(hass: HomeAssistant) -> bool:
         state = _migrate_v1_to_v2(state)
         await store.async_save(state)
 
+    # 2.12.13: invite PINs move from unsalted sha256 to a salted slow hash.
+    from .household.sub_users import migrate_invites
+
+    changed = migrate_invites(state)
+    # The persisted `pin_verified` flag is dead since 2.12.13 (the proof is a
+    # per-browser session); drop it from upgraded state.
+    changed = (state.pop("pin_verified", None) is not None) or changed
+    if changed:
+        await store.async_save(state)
+        _LOGGER.info("onboarding state migrated (invite hashes / legacy PIN flag)")
+
     hass.data[DOMAIN] = {"store": store, "state": state}
 
     # Register onboarding HTTP views (always — status check needs to work)
@@ -755,14 +766,17 @@ _WIZARD_SETUP_PATH = "/greenautarky-setup.html"
 # and the setup panel reads exactly these two back out of `window.location`
 # (ha-panel-greenautarky-setup.ts): `pin` auto-fills the six digits, `device`
 # names the unit, and the panel then clears both from the address bar.
-# Redirecting `/` to a bare path throws them away, so a customer who scanned
-# the QR code still has to read the PIN off the label and type it in — which
-# is the one thing the QR code exists to avoid.
 #
-# An ALLOWLIST, not the whole query string: these are the only two the
-# consumer reads, and nothing else customer-controlled belongs in a Location
-# header. Re-encoding through urlencode() also normalises whatever arrived.
-_WIZARD_FORWARDED_PARAMS = ("pin", "device")
+# 2.12.13 (F3c): the PIN is NOT forwarded and the wizard no longer reads it from
+# the address — the permanent label PIN must not travel in a URL (proxy logs,
+# Location headers, browser history), and a printed QR now just opens the
+# wizard; the resident types the PIN (POST body only). Only `device` (a label,
+# not a secret) is carried.
+#
+# An ALLOWLIST, not the whole query string: nothing else customer-controlled
+# belongs in a Location header. Re-encoding through urlencode() also
+# normalises whatever arrived.
+_WIZARD_FORWARDED_PARAMS = ("device",)
 
 
 def _wizard_redirect_target(request: web.Request) -> str:

@@ -15,7 +15,7 @@ top-level paths. `hass.callApi("get", "greenautarky_site/x")` from frontend JS.
 |---|---|---|
 | GET `/greenautarky-setup` | open | The wizard HTML page (redirect target while onboarding incomplete). |
 | GET `/admin` | open | Admin shortcut that bypasses the wizard redirect. |
-| GET `/api/greenautarky_site/status` | open | Wizard progress: steps done, completed flag, PIN required? Polled by the wizard + e2e. |
+| GET `/api/greenautarky_site/status` | open | Wizard progress. Allow-listed fields only (`completed`, `tenant_mode`, `gdpr_accepted`, `steps_done`, `pin_required`, `pin_provisioned`, `pin_verified` = this browser's session). Polled by the wizard + e2e. |
 | POST `/api/greenautarky_site/verify_pin` | open (PIN is the gate; exponential backoff) | Verify the 6-digit device-sticker PIN. |
 | POST `/api/greenautarky_site/gdpr` | open (pre-completion only) | Record GDPR consent step. |
 | POST `/api/greenautarky_site/telemetry` | open (pre-completion only) | Record telemetry consent choice. |

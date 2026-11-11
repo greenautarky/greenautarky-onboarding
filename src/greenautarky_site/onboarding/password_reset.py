@@ -25,6 +25,30 @@ from .pin import _pin_file_path, _pin_required
 
 _LOGGER = logging.getLogger(__name__)
 
+#: F3a (2.12.13): a password reset behind the sticker PIN ALONE is switched off
+#: over HTTP. The PIN is permanent (printed on the label, never rotated) and the
+#: endpoint is reachable from the internet, so "label in hand" was enough to take
+#: over any tenant account. Interim until the support-code reset lands; flip to
+#: True only together with that second factor.
+PIN_ONLY_RESET_ENABLED = False
+
+
+def _pin_only_reset_disabled() -> web.Response | None:
+    if PIN_ONLY_RESET_ENABLED:
+        return None
+    return web.json_response(
+        {
+            "error": "Password reset is currently unavailable",
+            "code": "password_reset_disabled",
+            "message": (
+                "Resetting a password with the device PIN is disabled. "
+                "Please contact support to regain access to your account."
+            ),
+        },
+        status=403,
+    )
+
+
 # Load HTML templates once at import time
 _PW_RESET_HTML = (Path(__file__).parent.parent / "password_reset_page.html").read_text(
     encoding="utf-8"
@@ -107,6 +131,8 @@ class GAPasswordResetUsersView(HomeAssistantView):
 
     async def post(self, request: web.Request) -> web.Response:
         """Return resettable users after verifying PIN."""
+        if err := _pin_only_reset_disabled():
+            return err
         hass: HomeAssistant = request.app["hass"]
         state = _get_state(hass)
         store = _get_store(hass)
@@ -184,6 +210,8 @@ class GAPasswordResetView(HomeAssistantView):
 
     async def post(self, request: web.Request) -> web.Response:
         """Reset password after PIN verification."""
+        if err := _pin_only_reset_disabled():
+            return err
         hass: HomeAssistant = request.app["hass"]
         state = _get_state(hass)
         store = _get_store(hass)

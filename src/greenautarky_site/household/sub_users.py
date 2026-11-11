@@ -70,8 +70,63 @@ _LOGGER = logging.getLogger(__name__)
 
 
 def _hash_invite_pin(pin: str) -> str:
-    """sha256 hex of an invite PIN (we never store the plaintext)."""
+    """sha256 hex of an invite PIN. Only an INPUT to the slow hash below —
+    never stored on its own (2.12.13): an unsalted sha256 of a short PIN is
+    brute-forced in milliseconds."""
     return hashlib.sha256(pin.encode("utf-8")).hexdigest()
+
+
+_SCRYPT_N, _SCRYPT_R, _SCRYPT_P = 2**14, 8, 1
+INVITE_KDF = "scrypt-v1"
+
+
+def _slow_hash(salt: bytes, pin_sha256: str) -> str:
+    return hashlib.scrypt(
+        pin_sha256.encode("ascii"), salt=salt,
+        n=_SCRYPT_N, r=_SCRYPT_R, p=_SCRYPT_P, dklen=32,
+    ).hex()
+
+
+def _invite_pin_fields(pin: str) -> dict[str, str]:
+    """Salted, slow hash record for an invite PIN (the stored form)."""
+    salt = secrets.token_bytes(16)
+    return {
+        "pin_kdf": INVITE_KDF,
+        "pin_salt": salt.hex(),
+        "pin_hash": _slow_hash(salt, _hash_invite_pin(pin)),
+    }
+
+
+def _invite_matches(inv: dict[str, Any], submitted: str) -> bool:
+    """Constant-time check of a submitted invite PIN against a stored record."""
+    try:
+        salt = bytes.fromhex(inv["pin_salt"])
+        stored = inv["pin_hash"]
+    except (KeyError, TypeError, ValueError):
+        return False
+    return hmac.compare_digest(stored, _slow_hash(salt, _hash_invite_pin(submitted)))
+
+
+def migrate_invites(state: dict[str, Any]) -> bool:
+    """Upgrade stored invites from the unsalted ``pin_sha256`` form (<= 2.12.12).
+
+    The old sha256 cannot be un-hashed, so it is wrapped: the new slow hash is
+    taken over that sha256 (``_slow_hash(salt, pin_sha256)``), which is exactly
+    what :func:`_invite_matches` computes for a submitted PIN. Live invites keep
+    working; the crackable value is gone from the state. Returns True if
+    anything changed (caller saves).
+    """
+    changed = False
+    for inv in state.get("sub_user_invites", []) or []:
+        legacy = inv.pop("pin_sha256", None) if isinstance(inv, dict) else None
+        if legacy is None:
+            continue
+        salt = secrets.token_bytes(16)
+        inv["pin_kdf"] = INVITE_KDF
+        inv["pin_salt"] = salt.hex()
+        inv["pin_hash"] = _slow_hash(salt, str(legacy))
+        changed = True
+    return changed
 
 
 def _gen_invite_pin() -> str:
@@ -220,7 +275,7 @@ class GASubUserInviteView(HomeAssistantView):
         exp = now + timedelta(hours=ttl_h)
         invites.append(
             {
-                "pin_sha256": _hash_invite_pin(pin),
+                **await hass.async_add_executor_job(_invite_pin_fields, pin),
                 "master_user_id": user.id,
                 "exp": exp.isoformat(),
                 "created_at": now.isoformat(),
@@ -345,10 +400,10 @@ class GASubUserJoinView(HomeAssistantView):
             )
 
         invites = _prune_invites(state.get("sub_user_invites", []), now)
-        submitted_hash = _hash_invite_pin(submitted)
         match: dict[str, Any] | None = None
         for inv in invites:
-            if hmac.compare_digest(inv.get("pin_sha256", ""), submitted_hash):
+            # scrypt is deliberately slow: keep it off the event loop.
+            if await hass.async_add_executor_job(_invite_matches, inv, submitted):
                 match = inv
                 break
 
