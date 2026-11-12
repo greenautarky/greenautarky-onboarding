@@ -18,8 +18,18 @@ set -euo pipefail
 VER="${1:?usage: pin_os.sh <version> [--draft]}"
 DRAFT="${2:-}"
 OS_REPO="${OS_REPO:-greenautarky/ha-operating-system}"
+# Branch the pin PR targets. NEVER master: since 2026-11-12 master is not a
+# release source (Thomas decision); pins live on release/1.5 and
+# feat/1.6-haos18. Unset (or "master") = no PR, said loudly, exit 0.
+OS_PIN_BASE="${OS_PIN_BASE:-}"
 KEY="greenautarky-site"
 : "${GH_TOKEN:?GH_TOKEN is not set}"
+
+if [ -z "$OS_PIN_BASE" ] || [ "$OS_PIN_BASE" = "master" ]; then
+  echo "::warning title=no pin PR opened::${KEY} ${VER} is published but NO pin PR was opened: OS_PIN_BASE is unset (or master) and master is no longer a release source. Pin ${VER} by hand on release/1.5 or feat/1.6-haos18, or set the repo variable OS_PIN_BASE."
+  [ -n "${GITHUB_STEP_SUMMARY:-}" ] && echo "NO pin PR for ${KEY} ${VER}: OS_PIN_BASE unset or master. Pin by hand on the release branch." >> "$GITHUB_STEP_SUMMARY"
+  exit 0
+fi
 
 [[ "$VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] \
   || { echo "::error::'$VER' is not a version"; exit 1; }
@@ -46,7 +56,7 @@ trap 'rm -rf "$work"' EXIT
 export GIT_TERMINAL_PROMPT=0
 CRED='!f() { echo username=x-access-token; echo "password=${GH_TOKEN}"; }; f'
 git -c credential.helper= -c credential.helper="$CRED" \
-  clone -q --depth 1 "https://github.com/${OS_REPO}.git" "$work/os"
+  clone -q --depth 1 --branch "$OS_PIN_BASE" "https://github.com/${OS_REPO}.git" "$work/os"
 cd "$work/os"
 git config credential.helper ""
 git config --add credential.helper "$CRED"
@@ -92,7 +102,7 @@ This PR only moves the pin. The version reaches devices with the next bake (rc) 
 if gh pr view "$br" --repo "$OS_REPO" --json state -q .state 2>/dev/null | grep -qx OPEN; then
   echo "PR for $br already open — branch updated"
 else
-  args=(--repo "$OS_REPO" --base master --head "$br"
+  args=(--repo "$OS_REPO" --base "$OS_PIN_BASE" --head "$br"
         --title "chore(bake): pin ${KEY} ${VER}" --body "$body")
   [ "$DRAFT" = "--draft" ] && args+=(--draft)
   gh pr create "${args[@]}" >/dev/null
