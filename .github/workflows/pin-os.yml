@@ -62,4 +62,5 @@ jobs:
       - name: Open the bake-pin PR
         env:
           GH_TOKEN: ${{ secrets.DOWNSTREAM_SYNC_PAT }}
+          OS_PIN_BASE: ${{ vars.OS_PIN_BASE }}
         run: bash scripts/ci/pin_os.sh "${{ steps.ver.outputs.value }}"
