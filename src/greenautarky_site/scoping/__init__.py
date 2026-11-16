@@ -5,6 +5,7 @@ the Stage-B read-path leak guard (``leak_guard``).
 Moved out of the component root (#574 stage B) — re-exports only.
 """
 
+from .resident_info import GAVersionsView, GAZigbeeDevicesView
 from .rooms import (
     GAEntityScopingView,
     GAHomeModelView,
@@ -19,6 +20,8 @@ __all__ = [
     "GAHomeModelView",
     "GAMyRoomsView",
     "GASubUserAssignRoomView",
+    "GAVersionsView",
+    "GAZigbeeDevicesView",
     "async_install_home_strategy",
     "async_scope_for",
 ]

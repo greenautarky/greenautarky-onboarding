@@ -107,6 +107,8 @@ from .scoping import (
     GAHomeModelView,
     GAMyRoomsView,
     GASubUserAssignRoomView,
+    GAVersionsView,
+    GAZigbeeDevicesView,
     async_install_home_strategy,
 )
 from .store import _get_state
@@ -367,6 +369,9 @@ async def _async_setup_common(hass: HomeAssistant) -> bool:
     # dashboard is generated per logged-in user by the ga-home strategy.
     hass.http.register_view(GAMyRoomsView())
     hass.http.register_view(GAHomeModelView())
+    # Einstellungen page (#2144, #2145): read-only facts, computed here.
+    hass.http.register_view(GAZigbeeDevicesView())
+    hass.http.register_view(GAVersionsView())
     hass.http.register_view(GASubUserAssignRoomView())
     hass.http.register_view(GAEntityScopingView())
 

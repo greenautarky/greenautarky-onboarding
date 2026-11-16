@@ -1,0 +1,9 @@
+{
+  "domain": "ga_e2e_seed",
+  "name": "GA e2e seed (test only)",
+  "version": "0.0.1",
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/greenautarky/greenautarky-onboarding",
+  "iot_class": "local_polling"
+}
