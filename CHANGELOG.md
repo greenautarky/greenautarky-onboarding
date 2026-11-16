@@ -1,3 +1,10 @@
+## 2.13.0
+
+Two read-only endpoints for the resident's Einstellungen page (Odoo #2144, #2145). No existing behaviour changes.
+
+- **`GET /api/greenautarky_site/zigbee_devices`** — every Zigbee device with its room (HA area), battery % (only where the device has a battery entity) and LQI (its `*_linkquality` sensor), sorted by room. A device without an area comes back with `area: null` (the card says "ohne Raum"); it is never dropped. The zigbee2mqtt bridge is left out. A room-scoped sub-user gets only the devices of the rooms granted to them. A radio address is never returned as a name.
+- **`GET /api/greenautarky_site/versions`** — what the device runs, read where it is observed, read fresh on every request: the GA release (`BOSv1.6.1-rc2`), OS, Supervisor, Core, plugins and every installed add-on from ga_manager's `/share/ga_manager/status.json` (needs ga_manager 0.277.6 for `ga_release`; older ga_manager: `bundle` is `null`, never a guess), and every custom integration from Core's own loader. A missing or corrupt report is returned as `status: missing|unreadable`.
+
 ## 2.12.13
 
 Login-flow hardening (internal review 2026-11-11). The sticker PIN stays permanent by design (it is printed on the device label), so its protection comes from the session binding (F2), no PIN-only reset (F3a) and the lockout/rate limits - not from rotation.
