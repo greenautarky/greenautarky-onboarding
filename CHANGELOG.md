@@ -1,3 +1,13 @@
+## 2.13.1
+
+The onboarding PIN no longer travels in a URL a server sees, and the label-QR pre-fill works again (Odoo #2159). DRAFT - not released.
+
+- **Root cause of "the QR does not pre-fill the PIN":** 2.12.13 (F3c) deliberately stopped the redirects forwarding `?pin=` and stopped the setup page reading it outside join mode, to keep the PIN out of Location headers and logs. That also switched the pre-fill off for every printed label (`/?pin=...&device=...`). Nobody listed the QR convenience as a cost of F3c.
+- **New label / invite form: `#pin=` (URL fragment).** A browser never sends the fragment, so it reaches no Caddy log, no proxy, no Referer and no `Location`. The setup page reads it client-side, pre-fills and submits it (POST body, as before) and removes it from the address bar (`history.replaceState`). Sub-user invite links are issued as `/greenautarky-join#pin=...`.
+- **Old printed labels and invite links (`?pin=`) keep working, but are not echoed.** `redirect_keeping_query` (every redirect of the component) and the `/` wizard redirect never forward `pin` in the `Location` header. A valid six-digit PIN is handed to the setup page in a 120 s cookie (`ga_pin_hint`, Caddy logs cookies as REDACTED), which the page reads and deletes. The request line of the printed URL itself still carries the PIN - that is in the proxy before any code of ours runs and stays the job of the Caddy log filter. Outside join mode the setup page still never reads the query string (F3c).
+- The committed setup bundle is patched in place again (frontend source archived; see BUILD-INFO). The file names are unchanged, so a browser that cached the old file keeps the old behaviour (no pre-fill) until its cache expires; no lockout.
+- Tests: node-driven tests of the patched block in both builds, redirect/cookie unit tests, invite-link test, and a Playwright e2e on a local Core behind a logging proxy (`tests/e2e/test_pin_not_in_url_e2e.py`): open the QR URL, PIN pre-filled and verified, onboarding completed, no request line / Location / Referer after the first legacy request carries the PIN.
+
 ## 2.13.0
 
 Two read-only endpoints for the resident's Einstellungen page (Odoo #2144, #2145). No existing behaviour changes.

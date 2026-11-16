@@ -204,17 +204,17 @@ async def test_the_pin_is_not_forwarded_in_a_redirect(hass, hass_client_no_auth)
     assert "device=KIB-SON-00000031" in r.headers["location"]
 
 
-def test_the_wizard_bundle_does_not_prefill_the_device_pin_from_the_url():
-    """The setup entry used to auto-fill (and auto-submit) ?pin=. Now only an
-    invite link (join mode) may. Checked on the committed bytes, both builds."""
+def test_the_wizard_bundle_never_reads_a_device_pin_from_the_query_string():
+    """F3c still holds in 2.13.1: outside join mode the QUERY STRING is not a PIN
+    source (the PIN now arrives in the fragment or the short-lived cookie - the
+    behaviour is driven in tests/test_setup_bundle_pin_sources.py). Checked on the
+    committed bytes, both builds."""
     root = pathlib.Path(__file__).resolve().parent.parent / "src/greenautarky_site/frontend_bundle"
     entries = list(root.glob("frontend_*/greenautarky-setup.*.js"))
     assert len(entries) == 2, entries  # coverage: latest + es5, fail closed on zero
     for js in entries:
         text = js.read_text(encoding="utf-8")
-        assigns = re.findall(r".{80}this\._autoPin=[a-z]\b", text)
-        assert len(assigns) == 1, (js.name, assigns)
-        assert "this._joinMode&&" in assigns[0], f"{js.name}: _autoPin set outside join mode"
+        assert text.count('(this._joinMode&&e.get("pin"))') == 1, js.name
 
 
 # ---------------------------------------------------------------- F4 -------

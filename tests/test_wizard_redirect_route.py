@@ -185,6 +185,25 @@ async def test_label_qr_device_survives_but_the_pin_is_not_forwarded(unpatched_i
     assert "123456" not in location
 
 
+async def test_label_qr_legacy_pin_arrives_by_cookie_only(unpatched_index_view):
+    """2.13.1 (Odoo #2159): a label printed before the fragment form carries
+    `?pin=`. The QR pre-fill works again, but through a short-lived cookie, never
+    through the Location header (Caddy logs response headers)."""
+    response = await _pending_view()._route.handler(
+        SimpleNamespace(query={"pin": "123456", "device": "KIB-SON-1"}, cookies={})
+    )
+    assert "123456" not in response.headers["location"]
+    assert response.cookies["ga_pin_hint"].value == "123456"
+    assert int(response.cookies["ga_pin_hint"]["max-age"]) <= 120
+
+
+async def test_no_pin_no_cookie(unpatched_index_view):
+    response = await _pending_view()._route.handler(
+        SimpleNamespace(query={"device": "KIB-SON-1"}, cookies={})
+    )
+    assert "ga_pin_hint" not in response.cookies
+
+
 async def test_no_query_still_redirects_to_the_bare_path(unpatched_index_view):
     """Someone typing the bare host must not get a stray `?`."""
     assert await _location(_pending_view(), {}) == SETUP_PATH

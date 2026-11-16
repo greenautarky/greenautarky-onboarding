@@ -36,25 +36,44 @@ def _loc(exc: web.HTTPFound) -> str:
 @pytest.mark.parametrize(
     "incoming, target, expect_path, expect_query",
     [
+        # 2.13.1 (Odoo #2159): `pin` is NEVER forwarded, everything else is.
         ("pin=123456", "/greenautarky-setup.html?join=1",
-         "/greenautarky-setup.html", {"pin": ["123456"], "join": ["1"]}),
+         "/greenautarky-setup.html", {"join": ["1"]}),
         ("pin=123456&device=KIB-SON-00000031", "/greenautarky-setup.html",
-         "/greenautarky-setup.html",
-         {"pin": ["123456"], "device": ["KIB-SON-00000031"]}),
+         "/greenautarky-setup.html", {"device": ["KIB-SON-00000031"]}),
         ("", "/greenautarky-setup.html?join=1",
          "/greenautarky-setup.html", {"join": ["1"]}),
         # The route's own value wins: a caller must not be able to turn join
         # mode off by sending join=0 to the join page.
-        ("join=0&pin=9", "/greenautarky-setup.html?join=1",
-         "/greenautarky-setup.html", {"join": ["1"], "pin": ["9"]}),
-        ("pin=", "/", "/", {"pin": [""]}),
+        ("join=0&pin=9&x=1", "/greenautarky-setup.html?join=1",
+         "/greenautarky-setup.html", {"join": ["1"], "x": ["1"]}),
+        ("pin=", "/", "/", {}),
     ],
 )
-def test_the_query_survives(incoming, target, expect_path, expect_query):
+def test_the_query_survives_except_the_pin(incoming, target, expect_path, expect_query):
     exc = redirect_keeping_query(_Req(incoming), target)
     parts = urlsplit(_loc(exc))
     assert parts.path == expect_path
     assert parse_qs(parts.query, keep_blank_values=True) == expect_query
+    assert "pin" not in parts.query
+
+
+def test_a_legacy_pin_is_handed_over_by_cookie_not_by_location():
+    exc = redirect_keeping_query(_Req("pin=246813&device=X"), "/greenautarky-setup.html?join=1")
+    assert "246813" not in exc.location
+    morsel = exc.cookies["ga_pin_hint"]
+    assert morsel.value == "246813"
+    assert int(morsel["max-age"]) <= 120, "the hint must be short-lived"
+    assert morsel["path"] == "/"
+
+
+@pytest.mark.parametrize("bad", ["", "12345", "1234567", "abcdef", "12345a", "123456\r\nSet-Cookie: x=y"])
+def test_only_a_six_digit_pin_becomes_a_cookie(bad):
+    from urllib.parse import quote
+
+    exc = redirect_keeping_query(_Req(f"pin={quote(bad)}"), "/greenautarky-setup.html")
+    assert "ga_pin_hint" not in exc.cookies
+    assert "pin" not in exc.location
 
 
 def test_a_handler_can_add_its_own_and_it_wins():
