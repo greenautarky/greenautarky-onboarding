@@ -101,6 +101,7 @@ from .onboarding import (
 )
 from .onboarding.forgot_password_link import async_patch_authorize_page
 from .onboarding.pin import _migrate_legacy_pin
+from .redirects import set_pin_hint
 from .rooms_sync import GARoomsSyncView
 from .scoping import (
     GAEntityScopingView,
@@ -767,16 +768,20 @@ async def _async_register_panel(hass: HomeAssistant) -> None:
 _WIZARD_SETUP_PATH = "/greenautarky-setup.html"
 
 # The device label's QR code encodes
-#   http://<prefix>.ki-butler.greenautarky.com/?pin=<pin>&device=<id>
-# and the setup panel reads exactly these two back out of `window.location`
-# (ha-panel-greenautarky-setup.ts): `pin` auto-fills the six digits, `device`
-# names the unit, and the panel then clears both from the address bar.
+#   http://<prefix>.ki-butler.greenautarky.com/#pin=<pin>&device=<id>   (2.13.1)
+#   http://<prefix>.ki-butler.greenautarky.com/?pin=<pin>&device=<id>   (older)
+# and the setup panel reads the PIN and `device` out of `window.location`
+# (ha-panel-greenautarky-setup.ts): `pin` auto-fills and submits the six digits
+# (POST body), `device` names the unit, and the panel then clears both from the
+# address bar.
 #
-# 2.12.13 (F3c): the PIN is NOT forwarded and the wizard no longer reads it from
-# the address — the permanent label PIN must not travel in a URL (proxy logs,
-# Location headers, browser history), and a printed QR now just opens the
-# wizard; the resident types the PIN (POST body only). Only `device` (a label,
-# not a secret) is carried.
+# 2.12.13 (F3c) stopped forwarding the PIN and stopped reading it, which also
+# switched the QR pre-fill off (found 2026-11-16, Odoo #2159). 2.13.1 brings the
+# pre-fill back without a PIN in any URL the SERVER sees: the new form carries
+# it in the fragment (never sent by a browser); an older printed label's
+# `?pin=` is not echoed in the Location header either, it is handed over in a
+# short-lived cookie (see redirects.set_pin_hint). Only `device` (a label, not
+# a secret) is carried in the redirect.
 #
 # An ALLOWLIST, not the whole query string: nothing else customer-controlled
 # belongs in a Location header. Re-encoding through urlencode() also
@@ -850,10 +855,14 @@ def _patch_index_view_for_wizard_redirect(hass: HomeAssistant) -> None:
             return await original_get(self, request)
         state = _get_state(hass) or {}
         if not state.get("completed", False):
-            return web.Response(
+            response = web.Response(
                 status=302,
                 headers={"location": _wizard_redirect_target(request)},
             )
+            # A label printed before 2.13.1 carries `?pin=`: not forwarded in
+            # the Location, handed to the setup page by cookie instead.
+            set_pin_hint(response, (getattr(request, "query", None) or {}).get("pin"))
+            return response
         return await original_get(self, request)
 
     IndexView.get = patched_get  # type: ignore[method-assign]

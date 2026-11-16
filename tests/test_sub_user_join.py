@@ -123,6 +123,21 @@ async def _issue_invite(hass, master, ttl_hours: int | None = None) -> str:
     return _body(resp)["pin"]
 
 
+async def test_invite_link_carries_the_pin_in_the_fragment_not_the_query(hass) -> None:
+    """Odoo #2159: a query string lands in proxy and server logs; a fragment is
+    never sent by a browser. The six digits stay in the answer for reading out."""
+    hass.config.external_url = "https://abc12xyz.ki-butler.greenautarky.com"
+    _seed(hass)
+    master = await _make_master(hass)
+    resp = await GASubUserInviteView().post(_FakeRequest(hass, {}, hass_user=master))
+    body = _body(resp)
+    assert body["invite_url"] == (
+        f"https://abc12xyz.ki-butler.greenautarky.com/greenautarky-join#pin={body['pin']}"
+    )
+    assert "?pin=" not in body["invite_url"]
+    assert body["pin"].isalnum()
+
+
 # --------------------------------------------------------------------------- #
 # master flag helper (fail-closed)
 # --------------------------------------------------------------------------- #

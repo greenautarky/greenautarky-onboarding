@@ -285,9 +285,11 @@ class GASubUserInviteView(HomeAssistantView):
         await store.async_save(state)
 
         _LOGGER.info("sub-user invite issued by master %s (ttl %dh)", user.id, ttl_h)
-        # A link, not six digits. The join page carries the query through since
-        # 2.9.4, and the wizard has always read ?pin= — so the master can send
-        # this straight to the person joining. The PIN stays in the answer: a
+        # A link, not six digits. The PIN rides in the URL FRAGMENT (2.13.1,
+        # Odoo #2159): a browser never sends it, so it reaches no proxy or
+        # server log. Links issued before that (`?pin=`) still work - see
+        # redirects.redirect_keeping_query - so the master can send this
+        # straight to the person joining. The PIN stays in the answer: a
         # link is useless when it has to be read out over the phone.
         #
         # The base is Home Assistant's own external URL, which on a GA device is
@@ -304,7 +306,7 @@ class GASubUserInviteView(HomeAssistantView):
                 "digits over the phone"
             )
         else:
-            invite_url = f"{base.rstrip('/')}/greenautarky-join?pin={pin}"
+            invite_url = f"{base.rstrip('/')}/greenautarky-join#pin={pin}"
 
         answer: dict[str, Any] = {
             "pin": pin,
@@ -331,9 +333,9 @@ class GASubUserJoinPageView(HomeAssistantView):
 
     async def get(self, request: web.Request) -> web.Response:
         """Redirect to the wizard in join mode."""
-        # ?join=1 is ours and wins; everything the invite LINK carries —
-        # ?pin= above all — rides along. The frontend has read it since it was
-        # written; only this line stood between a link and six typed digits.
+        # ?join=1 is ours and wins; the rest of the query rides along. A
+        # `#pin=` fragment survives the redirect in the browser by itself; an
+        # old `?pin=` link is turned into a cookie, not echoed (redirects.py).
         raise redirect_keeping_query(request, "/greenautarky-setup.html?join=1")
 
 
