@@ -14,13 +14,14 @@ from __future__ import annotations
 
 import pytest
 
-from greenautarky_site.const import SUB_USER_MIN_PASSWORD_LEN
 from test_onboarding_account_step import (
     _count,
     _install_hass_auth_provider,
     _post,
     _seed,
 )
+
+from greenautarky_site.const import SUB_USER_MIN_PASSWORD_LEN
 
 pytestmark = pytest.mark.usefixtures("pin_not_under_test")
 
