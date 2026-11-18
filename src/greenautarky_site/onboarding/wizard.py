@@ -29,7 +29,11 @@ from homeassistant.helpers.storage import Store
 from .. import dashboards
 from ..consent import async_record_consent, get_outdated_consents
 from ..console_as import ACCOUNT_MARKER_KEY, record_account
-from ..const import REQUIRED_FOR_COMPLETE, SITE_DEFAULT_LANGUAGE
+from ..const import (
+    REQUIRED_FOR_COMPLETE,
+    SITE_DEFAULT_LANGUAGE,
+    SUB_USER_MIN_PASSWORD_LEN,
+)
 from ..household.dashboards_admin import _reconcile_dashboard_visibility
 from ..household.masters import _read_master_user_ids, _write_master_users
 from ..household.sub_users import _async_create_linked_person
@@ -834,6 +838,23 @@ class GAOnboardingCreateUserView(HomeAssistantView):
         # person walks once; it has to survive being walked twice.
         created_here = False
         state, existing_user, credentials = await _async_account_state(hass, provider, username)
+        # PASSWORD RULE on the primary path (Odoo #2052, EN 18031). The sub-user
+        # join has enforced a minimum since it was written; the main account,
+        # the one that matters most, accepted any non-empty string, including
+        # one space. Counted on the TRIMMED value so padding cannot satisfy it;
+        # the password itself is stored exactly as typed, because trimming what
+        # is stored would lock out a resident whose password has an edge space.
+        #
+        # Only where a credential is about to be CREATED (state "absent"), and
+        # BEFORE the replace branch deletes the old account: refusing after
+        # that would leave the device with no account. Adopting an existing
+        # account is a login, not a new password, so a legacy short one still
+        # gets through a retried step (the "not a dead end" rule above).
+        if state == "absent" and len(password.strip()) < SUB_USER_MIN_PASSWORD_LEN:
+            return self.json_message(
+                f"password too short (min {SUB_USER_MIN_PASSWORD_LEN})",
+                status_code=400,
+            )
         if state == "absent":
             # A SECOND ADDRESS FOR THE SAME RUN. This run already created its
             # account (a page reload during the consent recovery of Odoo #1695

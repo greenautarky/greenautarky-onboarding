@@ -135,6 +135,18 @@ async def test_replace_with_a_verified_pin_deletes_the_old_user_and_person(hass,
     await provider.async_validate_login("two@example.invalid", THE_USUAL)
 
 
+async def test_replace_with_a_too_short_password_keeps_the_old_account(hass, run):
+    """Odoo #2052: the password rule must refuse BEFORE the old account is deleted."""
+    await _auth(hass)
+    assert (await _post(hass, "one@example.invalid", "One")).status == 200
+
+    resp = await _post(hass, "two@example.invalid", "Two", replace=True, secret="short")
+
+    assert resp.status == 400
+    assert len(_users(hass, "One")) == 1, "a refused replacement deleted the old account"
+    assert _users(hass, "Two") == []
+
+
 async def test_without_the_replace_request_the_409_stays(hass, run):
     await _auth(hass)
     await _post(hass, "one@example.invalid", "One")
