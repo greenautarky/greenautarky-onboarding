@@ -13,7 +13,6 @@ view, like the rest of the account-step suite.
 from __future__ import annotations
 
 import pytest
-
 from test_onboarding_account_step import (
     _count,
     _install_hass_auth_provider,
