@@ -1,3 +1,20 @@
+## 2.14.0
+
+Underfloor-heating relay channels in rooms-sync (contract v1, Odoo #1482; ga-ihost-docs `docs/heating-ufh-relay-channel-assignment-concept.md` §10; Thomas' decisions of 2026-11-19).
+
+- **Each room may carry `actuators: [{ieee, channel}]`.** A relay is one device feeding several rooms, so its channels are placed at **entity** level, never the device:
+  - the switch entity `<ieee>_switch_<lN>_zigbee2mqtt` gets the room's area, the label `ga_heat_actuator` and `hidden_by: integration`;
+  - the countdown entity gets the same area and is hidden, with no label;
+  - the relay device keeps no area.
+
+  This is exactly what ga_heating 0.14.4 drives. A relay IEEE listed in `members` is ignored as a member.
+- **Complete set.** If any room carries `actuators` (an empty list counts), the union is the gateway's complete set. A channel this handler placed earlier and the set no longer lists is **released** (D4): label and area removed, still hidden.
+  - Only channels this handler placed are released; the store key is `rooms_sync_actuators`.
+  - A batch with a failed room releases nothing.
+  - An older producer without the key places and releases nothing.
+- **Reported, not silent.** Per room: `actuators_assigned`, `actuators_unknown` (`unknown_ieee`, `unknown_channel`, `no_countdown`). `no_countdown` is placed and reported (D7: warn). Top level: `actuators_released`.
+- Seam fixture `tests/fixtures/rooms_sync_actuators.v1.json`, the same bytes as in ga-ihost-docs and the producer/transport repos (sha256 `422940fd…`).
+
 ## 2.13.0
 
 Two read-only endpoints for the resident's Einstellungen page (Odoo #2144, #2145). No existing behaviour changes.
