@@ -1,0 +1,24 @@
+{
+  "_doc": "Seam fixture for the rooms-sync 'actuators' contract v1 (docs/heating-ufh-relay-channel-assignment-concept.md §10). The SAME bytes live in device-api (producer), ga_manager + ga-fleet-manager (model round-trip) and greenautarky_site (consumer). One relay serves two rooms; channel l4 is unused; a third room has no relay but carries the key, so the set is complete.",
+  "request": {
+    "rooms": [
+      {"ref": "room_11111111111111111111111111111111", "name": "Wohnzimmer", "members": ["0xaaaaaaaaaaaaaaa1"],
+       "kind": "living_room",
+       "actuators": [{"ieee": "0xa4c1382ee485666c", "channel": "l1"}]},
+      {"ref": "room_22222222222222222222222222222222", "name": "Bad", "members": [],
+       "kind": "bathroom",
+       "actuators": [{"ieee": "0xa4c1382ee485666c", "channel": "l2"},
+                     {"ieee": "0xa4c1382ee485666c", "channel": "l3"}]},
+      {"ref": "room_33333333333333333333333333333333", "name": "Flur", "members": ["0xaaaaaaaaaaaaaaa2"],
+       "actuators": []}
+    ]
+  },
+  "expected_result": {
+    "rooms": {
+      "room_11111111111111111111111111111111": {"actuators_assigned": ["0xa4c1382ee485666c/l1"], "actuators_unknown": []},
+      "room_22222222222222222222222222222222": {"actuators_assigned": ["0xa4c1382ee485666c/l2", "0xa4c1382ee485666c/l3"], "actuators_unknown": []},
+      "room_33333333333333333333333333333333": {"actuators_assigned": [], "actuators_unknown": []}
+    },
+    "actuators_released": []
+  }
+}

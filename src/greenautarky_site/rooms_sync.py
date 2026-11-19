@@ -96,6 +96,109 @@ MAX_MEMBERS_PER_ROOM = 128
 # resident has renamed a room WITHOUT the new name ever leaving the device.
 STATE_KEY = "rooms_sync_installed_names"
 
+# ─── underfloor relay channels (contract v1, Odoo #1482) ────────────────
+# ga-ihost-docs docs/heating-ufh-relay-channel-assignment-concept.md §10.
+#
+# A relay is ONE device feeding SEVERAL rooms, so its channels are placed at
+# ENTITY level — never the device. ga_heating (0.14.4+) drives a switch entity
+# as an underfloor actuator exactly when the entity carries this label and has
+# an area; the value is pinned to ga_heating's `floor.ACTUATOR_LABEL`.
+ACTUATOR_LABEL = "ga_heat_actuator"
+#: The channels THIS handler placed, as "<ieee>/<channel>" — the only ones a
+#: later complete sync may release (D4). Never a channel someone else labelled.
+ACTUATOR_STATE_KEY = "rooms_sync_actuators"
+MAX_ACTUATORS_PER_ROOM = 32
+_CHANNEL_RE = re.compile(r"^l[1-9]$")
+_IEEE_EXACT_RE = re.compile(r"^0x[0-9a-f]{16}$")
+
+
+def _actuator_entities(ent_reg: er.EntityRegistry, ieee: str,
+                       channel: str) -> tuple[str | None, str | None]:
+    """(switch, countdown) entity ids of one relay channel, or None each.
+
+    Zigbee2MQTT's unique ids, measured on K0 (2026-11-02, TS0004 and TS0014):
+    `<ieee>_switch_<lN>_zigbee2mqtt` and `<ieee>_countdown_<lN>_zigbee2mqtt`,
+    platform `mqtt` — the same rule ga_heating's `countdown_unique_id()` uses.
+    """
+    switch = ent_reg.async_get_entity_id(
+        "switch", "mqtt", f"{ieee}_switch_{channel}_zigbee2mqtt")
+    countdown = ent_reg.async_get_entity_id(
+        "number", "mqtt", f"{ieee}_countdown_{channel}_zigbee2mqtt")
+    return switch, countdown
+
+
+def _parse_actuators(raw: Any) -> list[tuple[str, str]] | str:
+    """The room's `actuators`, validated; a message string when malformed."""
+    if not isinstance(raw, list):
+        return "actuators must be a list"
+    if len(raw) > MAX_ACTUATORS_PER_ROOM:
+        return f"more than {MAX_ACTUATORS_PER_ROOM} actuators in one room"
+    out: list[tuple[str, str]] = []
+    for item in raw:
+        if not isinstance(item, dict) or set(item) - {"ieee", "channel"}:
+            return "each actuator must be {ieee, channel}"
+        ieee = str(item.get("ieee") or "").strip().lower()
+        channel = str(item.get("channel") or "").strip().lower()
+        if not _IEEE_EXACT_RE.match(ieee) or not _CHANNEL_RE.match(channel):
+            return f"actuator {ieee!r}/{channel!r} is not a valid ieee/channel"
+        out.append((ieee, channel))
+    return out
+
+
+def _place_actuator(hass: HomeAssistant, ent_reg: er.EntityRegistry, area_id: str,
+                    label_id: str | None, by_ieee: dict[str, str],
+                    ieee: str, channel: str) -> tuple[bool, str | None]:
+    """Place one channel in `area_id`. Returns (placed, reason-if-reported).
+
+    `no_countdown` is reported AND placed (Thomas D7: warn, not block):
+    ga_heating never switches such a channel ON and says so itself.
+    """
+    if ieee not in by_ieee:
+        return False, "unknown_ieee"
+    switch, countdown = _actuator_entities(ent_reg, ieee, channel)
+    if switch is None:
+        return False, "unknown_channel"
+    entry = ent_reg.async_get(switch)
+    labels = set(entry.labels) | ({label_id} if label_id else set())
+    changes: dict[str, Any] = {}
+    if entry.area_id != area_id:
+        changes["area_id"] = area_id
+    if labels != set(entry.labels):
+        changes["labels"] = labels
+    if entry.hidden_by is None:
+        # Hidden from the resident: a channel is an actuator, not a plug
+        # (scoping/rooms.py skips hidden entities).
+        changes["hidden_by"] = er.RegistryEntryHider.INTEGRATION
+    if changes:
+        ent_reg.async_update_entity(switch, **changes)
+    if countdown is None:
+        return True, "no_countdown"
+    cd = ent_reg.async_get(countdown)
+    cd_changes: dict[str, Any] = {}
+    if cd.area_id != area_id:
+        cd_changes["area_id"] = area_id
+    if cd.hidden_by is None:
+        cd_changes["hidden_by"] = er.RegistryEntryHider.INTEGRATION
+    if cd_changes:
+        ent_reg.async_update_entity(countdown, **cd_changes)
+    return True, None
+
+
+def _release_actuator(ent_reg: er.EntityRegistry, ieee: str, channel: str) -> bool:
+    """D4: label and area removed, entities stay hidden. True if anything changed."""
+    switch, countdown = _actuator_entities(ent_reg, ieee, channel)
+    changed = False
+    if switch is not None:
+        entry = ent_reg.async_get(switch)
+        if ACTUATOR_LABEL in entry.labels or entry.area_id is not None:
+            ent_reg.async_update_entity(
+                switch, labels=set(entry.labels) - {ACTUATOR_LABEL}, area_id=None)
+            changed = True
+    if countdown is not None and ent_reg.async_get(countdown).area_id is not None:
+        ent_reg.async_update_entity(countdown, area_id=None)
+        changed = True
+    return changed
+
 
 def _norm(name: str) -> str:
     return " ".join(str(name).split()).casefold()
@@ -477,7 +580,22 @@ class GARoomsSyncView(HomeAssistantView):
 
         area_reg = ar.async_get(hass)
         dev_reg = dr.async_get(hass)
+        ent_reg = er.async_get(hass)
         by_ieee = _ieee_index(hass)
+
+        # Contract v1 §10.1: if ANY room carries `actuators`, the union is the
+        # COMPLETE set for this gateway and earlier placements not in it are
+        # released. An older producer sends no such key: nothing placed, nothing
+        # released.
+        actuators_complete = any(isinstance(r, dict) and "actuators" in r for r in rooms)
+        relay_ieees = {
+            str(a.get("ieee") or "").strip().lower()
+            for r in rooms if isinstance(r, dict)
+            for a in (r.get("actuators") or []) if isinstance(a, dict)
+        }
+        actuator_label = (_ensure_kind_label(hass, ACTUATOR_LABEL)
+                          if actuators_complete else None)
+        placed_now: set[str] = set()
 
         state = _get_state(hass)
         installed: dict[str, str] = dict(state.get(STATE_KEY) or {})
@@ -533,6 +651,14 @@ class GARoomsSyncView(HomeAssistantView):
                 else:
                     kind = value
             kind_name = str(entry.get("kind_name") or "").strip() or None
+
+            actuators: list[tuple[str, str]] = []
+            if "actuators" in entry:
+                parsed = _parse_actuators(entry.get("actuators"))
+                if isinstance(parsed, str):
+                    return self.json({"message": f"room {name!r}: {parsed}"},
+                                     status_code=400)
+                actuators = parsed
 
             members = entry.get("members") or []
             if not isinstance(members, list):
@@ -684,6 +810,13 @@ class GARoomsSyncView(HomeAssistantView):
                 named = 0
                 for raw in members:
                     ieee = str(raw).strip().lower()
+                    if ieee in relay_ieees:
+                        # A relay spans several rooms: placing the DEVICE would
+                        # put all its channels in this one. Its channels are
+                        # placed below, at entity level.
+                        _LOGGER.warning("rooms-sync: relay %s listed as a member of "
+                                        "room %r — ignored as a member", ieee, ref)
+                        continue
                     device_id = by_ieee.get(ieee)
                     if device_id is None:
                         # Almost always "not interviewed yet" rather than an
@@ -700,6 +833,18 @@ class GARoomsSyncView(HomeAssistantView):
                     # again — which is why every device kept its radio address.
                     if _name_device_if_unnamed(hass, dev_reg, device_id, area.id, taken):
                         named += 1
+
+                act_assigned: list[str] = []
+                act_unknown: list[dict[str, str]] = []
+                for ieee, channel in actuators:
+                    placed, reason = _place_actuator(
+                        hass, ent_reg, area.id, actuator_label, by_ieee, ieee, channel)
+                    if placed:
+                        act_assigned.append(f"{ieee}/{channel}")
+                        placed_now.add(f"{ieee}/{channel}")
+                    if reason:
+                        act_unknown.append(
+                            {"ieee": ieee, "channel": channel, "reason": reason})
 
                 results.append({
                     "name": name,
@@ -719,6 +864,8 @@ class GARoomsSyncView(HomeAssistantView):
                     "renamed_by_resident": renamed_by_resident,
                     "members_assigned": assigned,
                     "members_unknown": unknown,
+                    "actuators_assigned": act_assigned,
+                    "actuators_unknown": act_unknown,
                 })
             except Exception as exc:  # broad ON PURPOSE — reported, not swallowed
                 # Counted and named per room, so the answer can never read as a
@@ -740,6 +887,8 @@ class GARoomsSyncView(HomeAssistantView):
                     "renamed_by_resident": False,
                     "members_assigned": 0,
                     "members_unknown": [],
+                    "actuators_assigned": [],
+                    "actuators_unknown": [],
                 })
 
         # A failed room claimed no area, so an area that SHOULD have been
@@ -747,6 +896,20 @@ class GARoomsSyncView(HomeAssistantView):
         # mistake the sweep's three safety properties exist to prevent, so a
         # batch with any failure in it sweeps nothing.
         swept = _sweep_unclaimed(hass, claimed) if first_sync and not failures else []
+
+        # D4 — release what THIS handler placed earlier and the complete set no
+        # longer lists. Same safety rule as the sweep: a batch with a failed
+        # room releases nothing, because that room's channels look unlisted.
+        previous = set(state.get(ACTUATOR_STATE_KEY) or [])
+        released: list[str] = []
+        if actuators_complete and not failures:
+            for key in sorted(previous - placed_now):
+                ieee, _, channel = key.partition("/")
+                if _release_actuator(ent_reg, ieee, channel):
+                    released.append(key)
+            state[ACTUATOR_STATE_KEY] = sorted(placed_now)
+        elif placed_now:
+            state[ACTUATOR_STATE_KEY] = sorted(previous | placed_now)
 
         state[STATE_KEY] = installed
         await _get_store(hass).async_save(state)
@@ -768,6 +931,7 @@ class GARoomsSyncView(HomeAssistantView):
             "swept": len(swept),
             "ok": failures == 0,
             "failed": failures,
+            "actuators_released": released,
         }
         # 207 rather than 200 when a room failed: a caller that checks for 200
         # sees the difference, and one that only checks 2xx still finds `ok`
