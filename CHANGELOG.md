@@ -1,4 +1,4 @@
-## Unreleased (DRAFT, version assigned at landing)
+## 2.15.0
 
 - **`GET /api/greenautarky_site/zigbee_devices`** carries the GA sticker label of each device (`label`, joined by IEEE) and `labels.status` (`ok` / `missing` / `unreadable`), read fresh from ga_manager's `/share/ga_manager/zigbee-labels.json` (Odoo #1905, contract v1). HA names are unchanged; nothing else shows the label.
 
