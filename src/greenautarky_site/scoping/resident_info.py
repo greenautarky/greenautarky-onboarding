@@ -59,6 +59,13 @@ _LOGGER = logging.getLogger(__name__)
 STATUS_FILE_ENV = "GA_MANAGER_STATUS_FILE"
 DEFAULT_STATUS_FILE = "/share/ga_manager/status.json"
 
+#: The GA labels (stickers) ga_manager stores on the device (Odoo #1905, contract v1).
+#: The environment variable is for tests and local runs only.
+LABELS_FILE_ENV = "GA_ZIGBEE_LABELS_FILE"
+DEFAULT_LABELS_FILE = "/share/ga_manager/zigbee-labels.json"
+_IEEE = re.compile(r"0x[0-9a-f]{16}")
+_GA_LABEL = re.compile(r"[A-Z]{3}-[A-Z]{3}-[0-9]{8}")
+
 _RADIO_ADDRESS = re.compile(r"^(?:0x)?[0-9a-f]{16}$", re.IGNORECASE)
 
 
@@ -102,10 +109,36 @@ def _display_name(dev: dr.DeviceEntry) -> str:
     return kind + tail
 
 
+def read_labels(path: Path) -> tuple[str, dict[str, str]]:
+    """``(status, {ieee: label})``; status is ``ok`` / ``missing`` / ``unreadable``.
+
+    Read on every request. An entry that is not IEEE -> sticker label is not shown."""
+    status, doc = _read_status(path)
+    if doc is None:
+        return status, {}
+    labels = doc.get("labels")
+    if doc.get("schema") != 1 or not isinstance(labels, dict):
+        _LOGGER.warning("%s is not a label file of schema 1", path)
+        return "unreadable", {}
+    return "ok", {k: v for k, v in labels.items()
+                  if _IEEE.fullmatch(k) and isinstance(v, str) and _GA_LABEL.fullmatch(v)}
+
+
+def _ieee_of(dev: dr.DeviceEntry) -> str | None:
+    for domain, ident in dev.identifiers:
+        raw = ident.removeprefix("zigbee2mqtt_").lower() if domain == "mqtt" else ""
+        if _IEEE.fullmatch(raw):
+            return raw
+    return None
+
+
 def build_zigbee_devices(
-    hass: HomeAssistant, user: Any, scope: str, areas: list[dict[str, str]]
+    hass: HomeAssistant, user: Any, scope: str, areas: list[dict[str, str]],
+    labels: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
-    """The device rows for one user, sorted by room then name."""
+    """The device rows for one user, sorted by room then name. ``label`` is the GA
+    sticker of the device or None; the HA name is never changed."""
+    labels = labels or {}
     dev_reg = dr.async_get(hass)
     ent_reg = er.async_get(hass)
     all_areas = {a["area_id"]: a["name"] for a in _areas(hass)}
@@ -150,6 +183,7 @@ def build_zigbee_devices(
             {
                 "device_id": dev.id,
                 "name": _display_name(dev),
+                "label": labels.get(_ieee_of(dev) or ""),
                 "area_id": dev.area_id,
                 # None, not "": the card owns the wording for a device with no room.
                 "area": all_areas.get(dev.area_id) if dev.area_id else None,
@@ -183,7 +217,13 @@ class GAZigbeeDevicesView(HomeAssistantView):
         masters = await hass.async_add_executor_job(_read_master_user_ids, hass)
         sub_users = state.get("sub_users") or {}
         scope, _reason, areas = await async_scope_for(hass, user, state, masters, sub_users)
-        return self.json({"devices": build_zigbee_devices(hass, user, scope, areas)})
+        status, labels = await hass.async_add_executor_job(
+            lambda: read_labels(Path(os.environ.get(LABELS_FILE_ENV) or DEFAULT_LABELS_FILE)))
+        return self.json({
+            "devices": build_zigbee_devices(hass, user, scope, areas, labels),
+            # Says why there are no labels, so the card never shows a silent gap.
+            "labels": {"status": status},
+        })
 
 
 # ---------------------------------------------------------------------------

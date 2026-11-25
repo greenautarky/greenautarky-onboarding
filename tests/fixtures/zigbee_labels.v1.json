@@ -1,0 +1,10 @@
+{
+  "_doc": "Seam fixture, Odoo #1905 contract v1. The SAME bytes live in ga-fleet-manager (sender), ga_manager (writer), greenautarky_site (reader) and ga-frontend-bundle (display). Synthetic IEEEs and labels.",
+  "request": {"schema": 1, "labels": {
+    "0xaaaaaaaaaaaaaaa1": "TRV-SON-00000012",
+    "0xaaaaaaaaaaaaaaa2": "THD-SON-00000327",
+    "0xaaaaaaaaaaaaaaa3": "REN-GIR-00000005"}},
+  "sha256": "f3fc1742803fad2438e9a31fa07e8e257fe5559245c8aa1ea058b960d8061aea",
+  "file_keys": ["labels", "schema", "sha256", "written_at"],
+  "reported_keys": ["count", "sha256", "status", "written_at"]
+}
