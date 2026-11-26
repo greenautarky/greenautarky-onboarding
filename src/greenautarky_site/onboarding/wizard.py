@@ -563,41 +563,47 @@ def _telemetry_set_preferences():
     return None
 
 
-#: What the wizard's telemetry step starts from: Tier 1 (legitimate interest)
-#: on, Tier 2 (consent) off. Pinned here, and in the tests, to the telemetry
-#: component's ``DEFAULT_PREFERENCES``.
-_TELEMETRY_WIZARD_DEFAULTS = {"error_logs": True, "metrics": False}
+def _telemetry_clear_preferences():
+    """The telemetry component's "forget the decision" entry point, or None.
+
+    Resolved at call time for the same reason as the setter above.
+    """
+    for name in ("custom_components.greenautarky_telemetry", "greenautarky_telemetry"):
+        try:
+            module = importlib.import_module(name)
+        except ImportError:
+            continue
+        clear = getattr(module, "async_clear_preferences", None)
+        if clear is not None:
+            return clear
+    return None
 
 
 async def _async_reset_telemetry_preferences(hass: HomeAssistant) -> str:
-    """Put the telemetry preferences back to the wizard's starting defaults.
+    """Forget the previous resident's telemetry decision.
 
     Returns ``"absent"`` (no telemetry component on this device, nothing to
-    reset) or ``"reset"`` (through the component's own entry point). A component
-    older than 0.2.4 has no entry point; it raises :class:`TelemetryTooOld`
-    WITHOUT changing anything: the flat-key write used to run here, reported
-    ``"legacy"`` and left the previous resident's Tier 2 opt-in active.
+    reset) or ``"cleared"``: the component removes its stored record, so the OS
+    gate finds none and sends neither tier, as on a freshly flashed device, and
+    the wizard's telemetry page starts from its defaults.
 
-    Limit: the component's setter records a DECISION, so the tiers return to the
-    defaults but carry a fresh ``accepted_at`` / ``policy_version`` instead of
-    the never-onboarded record (``policy_version_accepted: None``). Writing that
-    exact record needs an entry point in greenautarky_telemetry that does not
-    exist yet; the values the OS gate reads are right either way, and the
-    wizard's telemetry step is neither skipped nor pre-answered by the stamp
-    (the step order is fixed and the toggles start from the defaults).
+    It does NOT record the starting values instead: the component's setter
+    records a decision (``accepted_at``, policy version), and a reset that used
+    it left a decision on record that nobody had made. A component without the
+    clear entry point raises :class:`TelemetryTooOld` WITHOUT changing anything.
     """
     telemetry_data = hass.data.get("greenautarky_telemetry")
     if not telemetry_data:
         return "absent"
-    setter = _telemetry_set_preferences()
-    if setter is None:
+    clear = _telemetry_clear_preferences()
+    if clear is None:
         raise TelemetryTooOld
-    await setter(hass, **_TELEMETRY_WIZARD_DEFAULTS)
-    return "reset"
+    await clear(hass)
+    return "cleared"
 
 
 class TelemetryTooOld(Exception):
-    """greenautarky_telemetry is older than 0.2.4 (no ``async_set_preferences``)."""
+    """greenautarky_telemetry cannot forget a decision (no ``async_clear_preferences``)."""
 
 
 class GAOnboardingTelemetryView(HomeAssistantView):
@@ -1060,8 +1066,9 @@ class GAOnboardingResetView(HomeAssistantView):
             telemetry_reset = await _async_reset_telemetry_preferences(hass)
         except TelemetryTooOld:
             _LOGGER.error(
-                "onboarding reset refused: greenautarky_telemetry is older than 0.2.4 "
-                "and cannot be reset; update the component. Nothing was changed."
+                "onboarding reset refused: greenautarky_telemetry cannot forget the "
+                "recorded decision (no async_clear_preferences); update the component. "
+                "Nothing was changed."
             )
             return web.json_response(
                 {
@@ -1069,8 +1076,8 @@ class GAOnboardingResetView(HomeAssistantView):
                     "code": "telemetry_component_outdated",
                     "message": (
                         "Telemetry could not be reset: the greenautarky_telemetry "
-                        "component is older than 0.2.4 and must be updated. "
-                        "Nothing was changed."
+                        "component cannot forget the recorded decision and must "
+                        "be updated. Nothing was changed."
                     ),
                 },
                 status=500,

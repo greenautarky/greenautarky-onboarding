@@ -95,8 +95,17 @@ def _install_telemetry(monkeypatch):
         await hass.data[TELEMETRY]["store"].async_save(prefs)
         return prefs
 
+    async def async_clear_preferences(hass):
+        prefs = hass.data[TELEMETRY]["preferences"]
+        prefs["tiers"]["tier1"].update(value=True, accepted_at=None, policy_version=None)
+        prefs["tiers"]["tier2"].update(value=False, accepted_at=None, policy_version=None)
+        prefs["policy_version_accepted"] = None
+        hass.data[TELEMETRY]["store"].saved = None  # the stored record is removed
+        return prefs
+
     mod = types.ModuleType(f"custom_components.{TELEMETRY}")
     mod.async_set_preferences = async_set_preferences
+    mod.async_clear_preferences = async_clear_preferences
     pkg = sys.modules.get("custom_components") or types.ModuleType("custom_components")
     monkeypatch.setitem(sys.modules, "custom_components", pkg)
     monkeypatch.setitem(sys.modules, f"custom_components.{TELEMETRY}", mod)
@@ -111,9 +120,9 @@ async def test_reset_returns_the_telemetry_tiers_to_the_wizard_defaults(hass, mo
     assert resp.status == 200
     tiers = hass.data[TELEMETRY]["preferences"]["tiers"]
     assert tiers["tier2"]["value"] is False, "the previous resident's Tier 2 opt-in survived the reset"
-    assert tiers["tier1"]["value"] is True, "Tier 1 must be back at its default (on)"
-    assert hass.data[TELEMETRY]["store"].saved is hass.data[TELEMETRY]["preferences"]
-    assert json.loads(resp.body)["telemetry_reset"] == "reset"
+    assert tiers["tier1"]["value"] is True, "the page must start from its default again"
+    assert hass.data[TELEMETRY]["store"].saved is None, "a decision stayed on record"
+    assert json.loads(resp.body)["telemetry_reset"] == "cleared"
 
 
 async def test_reset_clears_pin_verified_and_a_gated_step_refuses_again(hass, monkeypatch):
@@ -162,8 +171,8 @@ async def test_reset_on_a_device_without_telemetry_still_works(hass, monkeypatch
 async def test_an_old_telemetry_component_is_a_loud_error_and_changes_nothing(
     hass, monkeypatch, caplog
 ):
-    """Component older than 0.2.4: no entry point, so the previous resident's Tier 2
-    opt-in cannot be reset. That is an HTTP error with a code, never ``ok``."""
+    """A component without the clear entry point cannot forget the previous
+    resident's decision. That is an HTTP error with a code, never ``ok``."""
     monkeypatch.delitem(sys.modules, f"custom_components.{TELEMETRY}", raising=False)
     monkeypatch.delitem(sys.modules, TELEMETRY, raising=False)
     st = _previous_resident(hass)
@@ -177,11 +186,11 @@ async def test_an_old_telemetry_component_is_a_loud_error_and_changes_nothing(
     assert resp.status == 500
     body = json.loads(resp.body)
     assert body["code"] == "telemetry_component_outdated"
-    assert "older than 0.2.4" in body["message"] and "updated" in body["message"]
+    assert "cannot forget" in body["message"] and "updated" in body["message"]
     assert "telemetry_reset" not in body
     assert json.dumps(hass.data[TELEMETRY]["preferences"], sort_keys=True) == before_prefs
     assert json.dumps(st, sort_keys=True) == before_state, "the wizard state changed"
-    assert any("older than 0.2.4" in r.message for r in caplog.records)
+    assert any("cannot forget" in r.message for r in caplog.records)
 
 
 async def test_a_failed_state_save_after_a_telemetry_reset_is_a_500_and_a_retry_works(
@@ -217,6 +226,7 @@ async def test_a_telemetry_failure_fails_the_reset_and_changes_nothing(hass, mon
 
     mod = types.ModuleType(f"custom_components.{TELEMETRY}")
     mod.async_set_preferences = boom
+    mod.async_clear_preferences = boom
     pkg = sys.modules.get("custom_components") or types.ModuleType("custom_components")
     monkeypatch.setitem(sys.modules, "custom_components", pkg)
     monkeypatch.setitem(sys.modules, f"custom_components.{TELEMETRY}", mod)
