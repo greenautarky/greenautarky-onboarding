@@ -1,3 +1,9 @@
+## 2.16.0
+
+- **An onboarding reset forgets the telemetry decision instead of recording one.** Before: the reset put the telemetry tiers back to their starting values through `async_set_preferences`, which records a decision (`accepted_at`, policy version), so a choice nobody made was on record. After: the reset calls `async_clear_preferences` and the stored record is removed; with no record the device sends neither tier, as after a fresh install, and the wizard's telemetry page starts from its defaults. The reset answer reads `telemetry_reset: "cleared"` (was `"reset"`). Needs greenautarky-telemetry 0.2.5; with an older one the reset answers 500 `telemetry_component_outdated` and changes nothing.
+- Tests: `test_reset_forgets_the_telemetry_decision.py` (red before, green after); the console-login token checks of #94 ship here too.
+- Also first released here: 2.15.0 below (never tagged on its own).
+
 ## 2.15.0
 
 - **`GET /api/greenautarky_site/zigbee_devices`** carries the GA sticker label of each device (`label`, joined by IEEE) and `labels.status` (`ok` / `missing` / `unreadable`), read fresh from ga_manager's `/share/ga_manager/zigbee-labels.json` (Odoo #1905, contract v1). HA names are unchanged; nothing else shows the label.
